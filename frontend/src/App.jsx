@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useNavigate, Navigate } from 'react-router-dom';
-import { LogOut, Wrench, Shield, User, HardHat, Compass } from 'lucide-react';
+import { LogOut, Wrench, Shield, User, HardHat, Compass, Menu, X } from 'lucide-react';
 import { ToastProvider } from './context/ToastContext';
 import { ConfirmProvider } from './context/ConfirmContext';
 import Home from './pages/public/Home';
@@ -14,10 +14,12 @@ export const API_URL = import.meta.env.VITE_API_URL || 'https://skillsverse-8x82
 
 function Navigation({ user, logout }) {
   const navigate = useNavigate();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const handleLogout = () => {
     logout();
     navigate('/');
+    setMobileMenuOpen(false);
   };
 
   return (
@@ -27,22 +29,30 @@ function Navigation({ user, logout }) {
         Skills<span>verse</span>
       </div>
 
-      <nav className="nav-links">
-        <Link to="/" className="nav-link">Home</Link>
+      <button 
+        className="mobile-menu-toggle" 
+        onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+        aria-label="Toggle menu"
+      >
+        {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+      </button>
+
+      <nav className={`nav-links ${mobileMenuOpen ? 'nav-links--open' : ''}`}>
+        <Link to="/" className="nav-link" onClick={() => setMobileMenuOpen(false)}>Home</Link>
         {user ? (
           <>
             {user.role === 'customer' && (
-              <Link to="/customer" className="nav-link flex items-center gap-1">
+              <Link to="/customer" className="nav-link flex items-center gap-1" onClick={() => setMobileMenuOpen(false)}>
                 <Compass size={16} /> Customer Portal
               </Link>
             )}
             {user.role === 'worker' && (
-              <Link to="/worker" className="nav-link flex items-center gap-1">
+              <Link to="/worker" className="nav-link flex items-center gap-1" onClick={() => setMobileMenuOpen(false)}>
                 <HardHat size={16} /> Worker Workspace
               </Link>
             )}
             {user.role === 'admin' && (
-              <Link to="/admin" className="nav-link flex items-center gap-1">
+              <Link to="/admin" className="nav-link flex items-center gap-1" onClick={() => setMobileMenuOpen(false)}>
                 <Shield size={16} /> Admin panel
               </Link>
             )}
@@ -55,10 +65,10 @@ function Navigation({ user, logout }) {
           </>
         ) : (
           <>
-            <Link to="/admin/login" className="nav-link nav-link--admin flex items-center gap-1">
+            <Link to="/admin/login" className="nav-link nav-link--admin flex items-center gap-1" onClick={() => setMobileMenuOpen(false)}>
               <Shield size={16} /> Admin
             </Link>
-            <Link to="/auth" className="btn btn-primary" style={{ padding: '8px 16px' }}>
+            <Link to="/auth" className="btn btn-primary" style={{ padding: '8px 16px' }} onClick={() => setMobileMenuOpen(false)}>
               Get Started
             </Link>
           </>
