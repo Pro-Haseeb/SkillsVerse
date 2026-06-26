@@ -135,9 +135,49 @@ async function releaseDuePayments() {
   return { released, failed, due: dueJobs.length };
 }
 
+async function refundJobPayment(jobDoc, { refundAmount } = {}) {
+  const job = jobDoc.payment ? jobDoc : await Job.findById(jobDoc._id || jobDoc);
+  if (!job) throw new Error('Job not found');
+
+  if (job.payment.status !== 'paid') {
+    throw new Error('Job has not been paid yet');
+  }
+
+  if (job.payment.holdStatus === 'refunded') {
+    throw new Error('Payment already refunded');
+  }
+
+  const refund = Number(refundAmount) || job.payment.amount;
+
+  if (stripe && job.payment.stripePaymentIntentId) {
+    try {
+      const refundAmountCents = Math.round(refund * 100);
+      await stripe.refunds.create({
+        payment_intent: job.payment.stripePaymentIntentId,
+        amount: refundAmountCents
+      });
+      console.log(`[Escrow] Refund succeeded on Stripe: ${refund} PKR for job ${job._id}`);
+    } catch (stripeErr) {
+      console.error('[Escrow] Stripe refund failed:', stripeErr);
+      throw new Error(`Stripe refund failed: ${stripeErr.message}`);
+    }
+  } else {
+    console.warn(`[Escrow] DB-only refund for job ${job._id} (no Stripe key or intent ID)`);
+  }
+
+  job.payment.holdStatus = 'refunded';
+  job.payment.refundAmount = refund;
+  job.payment.workerAmount = Math.max(0, (job.payment.workerAmount || 0) - refund);
+  await job.save();
+
+  return job;
+}
+
 module.exports = {
   HOLD_DAYS,
   computePaymentBreakdown,
   releaseDuePayments,
-  releaseJobPayment
+  releaseJobPayment,
+  refundJobPayment
 };
+

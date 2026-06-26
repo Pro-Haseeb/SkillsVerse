@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
-import { MapPin, Phone, CheckCircle, Navigation, Send, AlertTriangle, MessageSquare, Mic, ListChecks, CreditCard, Briefcase, User } from 'lucide-react';
+import { MapPin, Phone, CheckCircle, Navigation, Send, AlertTriangle, MessageSquare, Mic, ListChecks, CreditCard, Briefcase, User, Map, Check, X, Hammer } from 'lucide-react';
 import { API_URL } from '../../App';
 import { useToast } from '../../context/ToastContext';
 import DashboardLayout from '../../components/shared/DashboardLayout';
@@ -9,6 +9,7 @@ import StatusBadge from '../../components/shared/StatusBadge';
 import EmptyState from '../../components/shared/EmptyState';
 import Pagination from '../../components/shared/Pagination';
 import { TableSkeleton } from '../../components/shared/LoadingSkeleton';
+import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 
 export default function WorkerDashboard({ user }) {
   const socketRef = useRef(null);
@@ -21,8 +22,10 @@ export default function WorkerDashboard({ user }) {
   const [profile, setProfile] = useState(user);
   const [isAvailable, setIsAvailable] = useState(user.isAvailable);
   const [jobsHistory, setJobsHistory] = useState([]);
+  const [constructionProjects, setConstructionProjects] = useState([]);
   const itemsPerPage = 10;
   const [historyPage, setHistoryPage] = useState(1);
+  const [constructionPage, setConstructionPage] = useState(1);
   const [earningsSummary, setEarningsSummary] = useState({ totalEarned: 0, pendingAmount: 0, completedJobs: 0 });
 
   // Active Job State
@@ -75,6 +78,7 @@ export default function WorkerDashboard({ user }) {
     loadProfile();
     loadActiveJob();
     loadWorkerHistory();
+    loadConstructionProjects();
     return () => {
       stopGpsSimulation();
       stopWatchingLocation();
@@ -111,11 +115,28 @@ export default function WorkerDashboard({ user }) {
     }
   };
 
+  const loadConstructionProjects = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/jobs/worker/construction`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setConstructionProjects(data);
+        setConstructionPage(1);
+      }
+    } catch (error) {
+      console.error('Failed to load construction projects:', error);
+    }
+  };
+
   const getPaginatedItems = (items, page) => items.slice((page - 1) * itemsPerPage, page * itemsPerPage);
   const getTotalPages = (items) => Math.max(1, Math.ceil(items.length / itemsPerPage));
 
   const visibleHistory = getPaginatedItems(jobsHistory, historyPage);
   const historyTotalPages = getTotalPages(jobsHistory);
+  const visibleConstruction = getPaginatedItems(constructionProjects, constructionPage);
+  const constructionTotalPages = getTotalPages(constructionProjects);
 
   // Trigger onboarding walkthrough if first time login
   useEffect(() => {
@@ -348,7 +369,32 @@ export default function WorkerDashboard({ user }) {
     setMessages([]);
     setActiveTab('overview');
     loadWorkerHistory();
+    loadConstructionProjects();
     loadProfile();
+  };
+
+  const handleConstructionResponse = async (jobId, action) => {
+    try {
+      const response = await fetch(`${API_URL}/api/jobs/${jobId}/worker-response`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({ action })
+      });
+      const data = await response.json();
+      if (response.ok) {
+        toast.success(data.message);
+        loadConstructionProjects();
+        loadWorkerHistory();
+      } else {
+        toast.error(data.error || 'Failed to respond to assignment');
+      }
+    } catch (error) {
+      console.error('Failed to respond to construction assignment:', error);
+      toast.error('Failed to respond to assignment');
+    }
   };
 
   // Sockets Setup
@@ -635,6 +681,7 @@ export default function WorkerDashboard({ user }) {
   const pageMeta = {
     overview: { title: 'Overview', subtitle: 'Your earnings, profile, and performance at a glance.' },
     'active-job': { title: 'Active Job', subtitle: 'Navigate to the customer, chat, and update job status.' },
+    'construction': { title: 'Construction Projects', subtitle: 'Review assigned construction projects and locations.' },
     history: { title: 'Service History', subtitle: 'Review past jobs and payment records.' },
   }[activeTab];
 
@@ -830,9 +877,10 @@ export default function WorkerDashboard({ user }) {
                     )}
 
                     {jobStatus === 'en_route' && (
-                      <p style={{ fontSize: '13px', color: 'var(--text-secondary)', textAlign: 'center', padding: '8px 0' }}>
-                        Waiting for the customer to confirm work completion.
-                      </p>
+                      <div style={{ textAlign: 'center', padding: '12px', background: 'rgba(34,197,94,0.07)', borderRadius: '10px', border: '1px solid rgba(34,197,94,0.2)' }}>
+                        <p style={{ fontSize: '13px', color: '#86efac', marginBottom: '4px' }}>✅ You have arrived at the customer location.</p>
+                        <p style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Work in progress — the customer will confirm completion and make the payment.</p>
+                      </div>
                     )}
 
                     {isSimulatingGps && (
@@ -959,6 +1007,134 @@ export default function WorkerDashboard({ user }) {
             />
           )}
         </>
+      )}
+
+      {activeTab === 'construction' && (
+        <div className="card card--padded">
+          <div className="section-header">
+            <Hammer size={20} color="var(--primary-orange)" />
+            <div className="section-header__text">
+              <h3>Construction Projects</h3>
+              <p>Review assigned construction projects with location maps.</p>
+            </div>
+          </div>
+
+          {constructionProjects.length === 0 ? (
+            <EmptyState
+              icon={Hammer}
+              title="No construction projects assigned"
+              description="Admin-assigned construction projects will appear here."
+            />
+          ) : (
+            <>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                {visibleConstruction.map((project) => (
+                  <div key={project._id} className="card" style={{ border: '1px solid var(--border-grey)', padding: '20px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                      {/* Project Details */}
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                          <h4 style={{ fontSize: '16px', color: '#fff' }}>{project.category}</h4>
+                          <StatusBadge status={project.status} />
+                        </div>
+                        
+                        <div style={{ marginBottom: '12px' }}>
+                          <span className="form-label" style={{ fontSize: '11px' }}>Project Description</span>
+                          <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>{project.description}</p>
+                        </div>
+
+                        <div style={{ marginBottom: '12px' }}>
+                          <span className="form-label" style={{ fontSize: '11px' }}>Customer</span>
+                          <p style={{ fontSize: '13px', color: '#fff', marginTop: '4px' }}>
+                            {project.customer?.name || 'Customer'}
+                            {project.customer?.phone && <span style={{ color: 'var(--text-secondary)', marginLeft: '8px' }}>{project.customer.phone}</span>}
+                          </p>
+                        </div>
+
+                        <div style={{ marginBottom: '12px' }}>
+                          <span className="form-label" style={{ fontSize: '11px' }}>Project Amount</span>
+                          <p style={{ fontSize: '16px', color: 'var(--success-color)', fontWeight: '700', marginTop: '4px' }}>
+                            PKR {project.payment?.amount?.toLocaleString() || 0}
+                          </p>
+                        </div>
+
+                        <div style={{ marginBottom: '12px' }}>
+                          <span className="form-label" style={{ fontSize: '11px' }}>Location Address</span>
+                          <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>{project.location?.address}</p>
+                        </div>
+
+                        {project.status === 'pending_acceptance' && (
+                          <div style={{ display: 'flex', gap: '10px', marginTop: '16px' }}>
+                            <button
+                              onClick={() => handleConstructionResponse(project._id, 'accept')}
+                              className="btn btn-primary"
+                              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                            >
+                              <Check size={16} /> Accept Project
+                            </button>
+                            <button
+                              onClick={() => handleConstructionResponse(project._id, 'reject')}
+                              className="btn btn-secondary"
+                              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', borderColor: 'var(--error-color)', color: 'var(--error-color)' }}
+                            >
+                              <X size={16} /> Reject Project
+                            </button>
+                          </div>
+                        )}
+
+                        {project.status === 'assigned' && (
+                          <div style={{ marginTop: '16px', padding: '12px', background: 'rgba(34,197,94,0.07)', borderRadius: '8px', border: '1px solid rgba(34,197,94,0.2)' }}>
+                            <p style={{ fontSize: '13px', color: '#86efac', margin: 0 }}>✅ Project accepted - Work in progress</p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Map Display */}
+                      <div>
+                        <span className="form-label" style={{ fontSize: '11px', marginBottom: '8px', display: 'block' }}>Project Location</span>
+                        <div style={{ height: '250px', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border-grey)' }}>
+                          {project.location?.latitude && project.location?.longitude ? (
+                            <MapContainer
+                              center={[project.location.latitude, project.location.longitude]}
+                              zoom={14}
+                              style={{ height: '100%', width: '100%' }}
+                            >
+                              <TileLayer
+                                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                              />
+                              <Marker position={[project.location.latitude, project.location.longitude]}>
+                                <Popup>
+                                  <div style={{ fontSize: '12px' }}>
+                                    <strong>{project.category}</strong><br />
+                                    {project.location?.address}
+                                  </div>
+                                </Popup>
+                              </Marker>
+                            </MapContainer>
+                          ) : (
+                            <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}>
+                              <Map size={32} />
+                              <span style={{ marginLeft: '8px' }}>Location not available</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <Pagination
+                page={constructionPage}
+                totalPages={constructionTotalPages}
+                totalItems={constructionProjects.length}
+                pageSize={itemsPerPage}
+                onPageChange={setConstructionPage}
+                itemLabel="projects"
+              />
+            </>
+          )}
+        </div>
       )}
 
       {activeTab === 'history' && (

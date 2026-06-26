@@ -11,9 +11,11 @@ export default function CustomerComplaintsPanel() {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [selectedJob, setSelectedJob] = useState(null);
+  const [paidJobs, setPaidJobs] = useState([]);
 
   useEffect(() => {
     loadComplaints();
+    loadPaidJobs();
   }, []);
 
   const loadComplaints = async () => {
@@ -31,6 +33,25 @@ export default function CustomerComplaintsPanel() {
     }
   };
 
+  const loadPaidJobs = async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/jobs/customer`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        // Filter jobs that are paid and don't have existing complaints
+        const paid = data.filter(job => 
+          job.payment.status === 'paid' && 
+          !complaints.some(c => String(c.jobId) === String(job._id))
+        );
+        setPaidJobs(paid);
+      }
+    } catch (err) {
+      console.error('Failed to load paid jobs', err);
+    }
+  };
+
   const openModalFor = (job) => {
     setSelectedJob(job);
     setShowModal(true);
@@ -40,6 +61,7 @@ export default function CustomerComplaintsPanel() {
     setShowModal(false);
     setSelectedJob(null);
     loadComplaints();
+    loadPaidJobs();
   };
 
   if (loading) {
@@ -58,7 +80,12 @@ export default function CustomerComplaintsPanel() {
           <h3>My Complaints & Disputes</h3>
           <p>Track dispute status and submit new complaints for recent jobs.</p>
         </div>
-        <button type="button" onClick={() => openModalFor({ _id: '', category: '' })} className="btn btn-primary btn-sm">
+        <button 
+          type="button" 
+          onClick={() => openModalFor(paidJobs[0] || null)} 
+          className="btn btn-primary btn-sm"
+          disabled={paidJobs.length === 0}
+        >
           File New Complaint
         </button>
       </div>
@@ -67,11 +94,15 @@ export default function CustomerComplaintsPanel() {
         <EmptyState
           icon={ShieldAlert}
           title="No complaints filed"
-          description="You have no disputes yet. File a complaint if you need help with a recent job."
+          description={paidJobs.length === 0 
+            ? "You have no paid jobs to file complaints against. Complete and pay for a job first." 
+            : "You have no disputes yet. File a complaint if you need help with a recent job."}
           action={
-            <button type="button" className="btn btn-primary" onClick={() => openModalFor({ _id: '', category: '' })}>
-              File a Complaint
-            </button>
+            paidJobs.length > 0 ? (
+              <button type="button" className="btn btn-primary" onClick={() => openModalFor(paidJobs[0])}>
+                File a Complaint
+              </button>
+            ) : null
           }
         />
       ) : (
@@ -106,9 +137,10 @@ export default function CustomerComplaintsPanel() {
         </div>
       )}
 
-      {showModal && selectedJob && (
+      {showModal && (
         <ComplaintModal
           job={selectedJob}
+          paidJobs={paidJobs}
           token={localStorage.getItem('token')}
           onClose={() => setShowModal(false)}
           onSuccess={handleModalSuccess}

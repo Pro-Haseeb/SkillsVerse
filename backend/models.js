@@ -44,7 +44,7 @@ const JobSchema = new Schema({
   },
   status: { 
     type: String, 
-    enum: ['pending', 'assigned', 'en_route', 'completed', 'cancelled'], 
+    enum: ['pending', 'pending_acceptance', 'assigned', 'en_route', 'completed', 'cancelled'], 
     default: 'pending' 
   },
   payment: {
@@ -96,6 +96,7 @@ const ComplaintSchema = new Schema({
   },
   refundAmount: { type: Number, default: 0 },
   adminNote: { type: String, default: '' },
+  resolvedAt: { type: Date, default: null },
   createdAt: { type: Date, default: Date.now }
 });
 

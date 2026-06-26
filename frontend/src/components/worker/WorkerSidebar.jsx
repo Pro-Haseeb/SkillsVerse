@@ -1,8 +1,9 @@
-import { HardHat, LayoutDashboard, Briefcase, Clock, User } from 'lucide-react';
+import { HardHat, LayoutDashboard, Briefcase, Clock, User, Hammer } from 'lucide-react';
 
 const WORKER_TABS = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'active-job', label: 'Active Job', icon: Briefcase },
+  { id: 'construction', label: 'Construction', icon: Hammer },
   { id: 'history', label: 'Service History', icon: Clock },
 ];
 

@@ -19,6 +19,9 @@ export default function AdminDashboard({ user }) {
   const [allJobs, setAllJobs] = useState([]);
   const [paymentsStats, setPaymentsStats] = useState({ totalEarnings: 0, pendingEarnings: 0, completedJobsCount: 0 });
   const [complaints, setComplaints] = useState([]);
+  const [expandedComplaint, setExpandedComplaint] = useState(null);
+  const [resolveData, setResolveData] = useState({}); // complaintId -> { refundAmount, adminNote }
+  const [resolving, setResolving] = useState({});
 
   const itemsPerPage = 10;
   const [workerPage, setWorkerPage] = useState(1);
@@ -225,6 +228,51 @@ export default function AdminDashboard({ user }) {
       console.error(error);
       toast.error('Failed to assign contractor.');
     }
+  };
+
+  const handleResolveComplaint = async (complaintId, action) => {
+    const data = resolveData[complaintId] || {};
+    const confirmed = await confirm({
+      title: action === 'approve' ? 'Approve Dispute & Issue Refund' : 'Reject Dispute & Release Payment',
+      message: action === 'approve'
+        ? `Issue a refund of PKR ${data.refundAmount || '(full amount)'} to the customer? This will execute a Stripe refund.`
+        : 'Reject this complaint and release the held funds to the worker?',
+      confirmLabel: action === 'approve' ? 'Approve & Refund' : 'Reject & Release',
+      danger: action === 'approve',
+    });
+    if (!confirmed) return;
+
+    setResolving(prev => ({ ...prev, [complaintId]: true }));
+    try {
+      const res = await fetch(`${API_URL}/api/admin/complaints/${complaintId}/resolve`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          action,
+          refundAmount: data.refundAmount ? Number(data.refundAmount) : undefined,
+          adminNote: data.adminNote || ''
+        })
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Failed to resolve complaint');
+      toast.success(result.message);
+      setExpandedComplaint(null);
+      loadAdminData();
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setResolving(prev => ({ ...prev, [complaintId]: false }));
+    }
+  };
+
+  const updateResolveField = (complaintId, field, value) => {
+    setResolveData(prev => ({
+      ...prev,
+      [complaintId]: { ...(prev[complaintId] || {}), [field]: value }
+    }));
   };
 
   const getPaginatedItems = (items, page) => items.slice((page - 1) * itemsPerPage, page * itemsPerPage);
@@ -796,36 +844,158 @@ export default function AdminDashboard({ user }) {
           {complaints.length === 0 ? (
             <EmptyState
               icon={ShieldAlert}
-              title="No complaints submitted"
+              title="No Complaints Filed"
               description="Customer disputes will appear here when filed."
             />
           ) : (
             <>
-              <div className="data-table-wrap">
-                <table className="data-table">
-                  <thead>
-                    <tr style={{ borderBottom: '1px solid var(--border-grey)', color: 'var(--text-secondary)' }}>
-                      <th style={{ padding: '12px' }}>Job</th>
-                      <th style={{ padding: '12px' }}>Customer</th>
-                      <th style={{ padding: '12px' }}>Worker</th>
-                      <th style={{ padding: '12px' }}>Title</th>
-                      <th style={{ padding: '12px' }}>Status</th>
-                      <th style={{ padding: '12px' }}>Submitted At</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {visibleComplaints.map(c => (
-                      <tr key={c._id} style={{ borderBottom: '1px solid var(--border-grey)' }}>
-                        <td style={{ padding: '12px', fontFamily: 'monospace' }}>{String(c.jobId).slice(-8)}</td>
-                        <td style={{ padding: '12px' }}>{c.customerName}</td>
-                        <td style={{ padding: '12px' }}>{c.workerName}</td>
-                        <td style={{ padding: '12px' }}>{c.title}</td>
-                        <td><StatusBadge status={c.status} /></td>
-                        <td style={{ padding: '12px' }}>{new Date(c.createdAt).toLocaleString()}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                  {complaints.filter(c => c.status === 'pending').length} pending · {complaints.length} total
+                </span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {visibleComplaints.map(c => {
+                  const isExpanded = expandedComplaint === c._id;
+                  const isPending = c.status === 'pending';
+                  const rData = resolveData[c._id] || {};
+                  const isResolvingNow = resolving[c._id];
+                  return (
+                    <div
+                      key={c._id}
+                      style={{
+                        background: isPending ? 'rgba(239,68,68,0.04)' : 'rgba(255,255,255,0.02)',
+                        border: `1px solid ${isPending ? 'rgba(239,68,68,0.2)' : 'rgba(255,255,255,0.06)'}`,
+                        borderRadius: '14px',
+                        overflow: 'hidden'
+                      }}
+                    >
+                      {/* Complaint Header Row */}
+                      <div
+                        style={{ padding: '16px 18px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}
+                        onClick={() => setExpandedComplaint(isExpanded ? null : c._id)}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
+                          <div style={{
+                            width: '38px', height: '38px', borderRadius: '10px', flexShrink: 0,
+                            background: isPending ? 'rgba(239,68,68,0.12)' : 'rgba(255,255,255,0.05)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            fontSize: '18px'
+                          }}>
+                            {isPending ? '🚩' : c.status === 'approved' ? '✅' : '❌'}
+                          </div>
+                          <div style={{ minWidth: 0 }}>
+                            <p style={{ fontSize: '14px', fontWeight: '700', color: '#f5f5f7', margin: '0 0 3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.title}</p>
+                            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>
+                              {c.customerName} vs {c.workerName} · Job #{String(c.jobId).slice(-6)}
+                            </p>
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
+                          <StatusBadge status={c.status} />
+                          <span style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>{new Date(c.createdAt).toLocaleDateString()}</span>
+                          <span style={{ color: 'var(--text-secondary)', fontSize: '16px' }}>{isExpanded ? '▲' : '▼'}</span>
+                        </div>
+                      </div>
+
+                      {/* Expanded Details */}
+                      {isExpanded && (
+                        <div style={{ padding: '0 18px 18px', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                          <div style={{ paddingTop: '16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+                            <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: '10px', padding: '12px' }}>
+                              <span style={{ fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Customer</span>
+                              <p style={{ margin: '4px 0 0', fontWeight: '600', color: '#f5f5f7' }}>{c.customerName}</p>
+                            </div>
+                            <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: '10px', padding: '12px' }}>
+                              <span style={{ fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Worker</span>
+                              <p style={{ margin: '4px 0 0', fontWeight: '600', color: '#f5f5f7' }}>{c.workerName}</p>
+                            </div>
+                            <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: '10px', padding: '12px', gridColumn: '1/-1' }}>
+                              <span style={{ fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Complaint Details</span>
+                              <p style={{ margin: '6px 0 0', fontSize: '13px', color: '#d1d5db', lineHeight: '1.6' }}>{c.details}</p>
+                            </div>
+                            {c.evidenceUrl && (
+                              <div style={{ gridColumn: '1/-1' }}>
+                                <span style={{ fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Evidence</span>
+                                <div style={{ marginTop: '8px' }}>
+                                  <a
+                                    href={c.evidenceUrl.startsWith('http') ? c.evidenceUrl : `${API_URL}${c.evidenceUrl}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    style={{ color: 'var(--primary-orange)', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                                  >
+                                    📎 View Uploaded Evidence
+                                  </a>
+                                </div>
+                              </div>
+                            )}
+                            {c.refundAmount > 0 && (
+                              <div style={{ gridColumn: '1/-1', background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.15)', borderRadius: '10px', padding: '12px' }}>
+                                <span style={{ fontSize: '12px', color: '#4ade80' }}>✅ Refunded: PKR {c.refundAmount.toLocaleString()}</span>
+                                {c.adminNote && <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '6px 0 0' }}>Admin note: {c.adminNote}</p>}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Resolution Controls — only for pending complaints */}
+                          {isPending && (
+                            <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '12px', padding: '16px' }}>
+                              <p style={{ fontSize: '13px', fontWeight: '600', color: '#f5f5f7', marginBottom: '12px' }}>⚖️ Resolve Dispute</p>
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '12px' }}>
+                                <div>
+                                  <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '5px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Refund Amount (PKR)</label>
+                                  <input
+                                    type="number"
+                                    placeholder="Leave blank for full refund"
+                                    value={rData.refundAmount || ''}
+                                    onChange={e => updateResolveField(c._id, 'refundAmount', e.target.value)}
+                                    style={{ width: '100%', background: 'var(--bg-input)', border: '1px solid var(--border-grey)', borderRadius: '8px', padding: '9px 12px', color: '#f5f5f7', fontSize: '13px', fontFamily: 'inherit', boxSizing: 'border-box' }}
+                                  />
+                                </div>
+                                <div>
+                                  <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '5px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Admin Note (Optional)</label>
+                                  <input
+                                    type="text"
+                                    placeholder="Internal resolution note"
+                                    value={rData.adminNote || ''}
+                                    onChange={e => updateResolveField(c._id, 'adminNote', e.target.value)}
+                                    style={{ width: '100%', background: 'var(--bg-input)', border: '1px solid var(--border-grey)', borderRadius: '8px', padding: '9px 12px', color: '#f5f5f7', fontSize: '13px', fontFamily: 'inherit', boxSizing: 'border-box' }}
+                                  />
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', gap: '10px' }}>
+                                <button
+                                  onClick={() => handleResolveComplaint(c._id, 'approve')}
+                                  disabled={isResolvingNow}
+                                  style={{
+                                    flex: 1, padding: '10px', borderRadius: '9px', border: 'none',
+                                    background: 'linear-gradient(135deg,#22c55e,#16a34a)', color: '#fff',
+                                    fontWeight: '600', fontSize: '13px', cursor: 'pointer', fontFamily: 'inherit',
+                                    opacity: isResolvingNow ? 0.6 : 1
+                                  }}
+                                >
+                                  {isResolvingNow ? '⏳ Processing…' : '✅ Approve & Refund Customer'}
+                                </button>
+                                <button
+                                  onClick={() => handleResolveComplaint(c._id, 'reject')}
+                                  disabled={isResolvingNow}
+                                  style={{
+                                    flex: 1, padding: '10px', borderRadius: '9px', border: 'none',
+                                    background: 'rgba(239,68,68,0.12)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.2)',
+                                    fontWeight: '600', fontSize: '13px', cursor: 'pointer', fontFamily: 'inherit',
+                                    opacity: isResolvingNow ? 0.6 : 1
+                                  }}
+                                >
+                                  {isResolvingNow ? '⏳ Processing…' : '❌ Reject & Release to Worker'}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
               <Pagination
                 page={complaintPage}

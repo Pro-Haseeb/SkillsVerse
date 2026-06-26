@@ -47,10 +47,11 @@ router.get('/test-auth', authenticateToken, (req, res) => {
 // Stripe requires amounts in smallest currency unit (paisa for PKR = PKR * 100)
 router.post('/create-payment-intent', authenticateToken, async (req, res) => {
   try {
-    const { jobId } = req.body;
+    const { jobId, amount } = req.body;
     console.log(`\n=== CREATE PAYMENT INTENT ===`);
     console.log(`User ID: ${req.user.id}`);
     console.log(`Job ID: ${jobId}`);
+    if (amount) console.log(`Negotiated Amount: ${amount}`);
 
     if (!jobId) {
       console.error('Job ID is missing');
@@ -73,6 +74,12 @@ router.post('/create-payment-intent', authenticateToken, async (req, res) => {
     if (job.payment.status === 'paid') {
       console.warn(`Job already paid: ${jobId}`);
       return res.status(400).json({ error: 'This job has already been paid' });
+    }
+
+    if (amount && Number(amount) > 0) {
+      console.log(`Updating job payment amount to: ${amount}`);
+      job.payment.amount = Number(amount);
+      await job.save();
     }
 
     // Convert PKR amount to paisa (smallest unit) for Stripe

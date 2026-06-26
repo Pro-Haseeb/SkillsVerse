@@ -13,7 +13,7 @@ import StatusBadge from '../../components/shared/StatusBadge';
 import EmptyState from '../../components/shared/EmptyState';
 import Pagination from '../../components/shared/Pagination';
 import { TableSkeleton } from '../../components/shared/LoadingSkeleton';
-import PaymentModal from '../../components/candidate/PaymentModal';
+import StripePaymentModal from '../../components/candidate/StripePaymentModal';
 import ComplaintModal from '../../components/candidate/ComplaintModal';
 
 // Custom Map Pins for Leaflet
@@ -1305,58 +1305,87 @@ export default function CustomerDashboard({ user }) {
                           </div>
                         </td>
                         <td style={{ padding: '12px' }}>
-                          {complaintMap[job._id] ? (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Complaint Status</span>
-                              <span className={`complaint-status complaint-status--${complaintMap[job._id].status}`}>
-                                {complaintMap[job._id].status}
-                              </span>
-                            </div>
-                          ) : job.status === 'completed' ? (
-                            <button
-                              onClick={() => openComplaintModal(job)}
-                              className="btn btn-danger"
-                              style={{ padding: '6px 12px', fontSize: '12px' }}
-                            >
-                              File Complaint
-                            </button>
-                          ) : null}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
 
-                          {/* Release/confirm payment actions removed from history per UX decision */}
+                            {/* Pay Now – for completed but unpaid jobs */}
+                            {job.status === 'completed' && job.payment.status !== 'paid' && (
+                              <button
+                                onClick={() => {
+                                  setActiveJob(job);
+                                  setShowPaymentModal(true);
+                                }}
+                                className="btn btn-primary"
+                                style={{ padding: '6px 12px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '5px' }}
+                              >
+                                <CreditCard size={12} /> Pay Now
+                              </button>
+                            )}
 
-                          {['assigned', 'en_route'].includes(job.status) && (
-                            <button
-                              onClick={() => {
-                                setActiveJob(job);
-                                setDispatchStatus('accepted');
-                                if (job.worker) {
-                                  setWorkerDetails(job.worker);
-                                  setWorkerCoords({ latitude: job.worker.latitude, longitude: job.worker.longitude });
-                                }
-                                setActiveTab('daily');
-                                setupSocket(job._id);
-                              }}
-                              className="btn btn-secondary"
-                              style={{ padding: '6px 12px', fontSize: '12px' }}
-                            >
-                              Track Live
-                            </button>
-                          )}
+                            {/* Complaint – filed already */}
+                            {complaintMap[job._id] ? (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Complaint</span>
+                                <span className={`complaint-status complaint-status--${complaintMap[job._id].status}`}>
+                                  {complaintMap[job._id].status}
+                                </span>
+                              </div>
+                            ) : job.status === 'completed' && job.payment.status === 'paid' ? (
+                              (() => {
+                                const paidAt = job.payment.paidAt ? new Date(job.payment.paidAt) : null;
+                                const windowExpired = paidAt && (Date.now() - paidAt.getTime() > 24 * 60 * 60 * 1000);
+                                return windowExpired ? (
+                                  <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                    <Clock size={11} /> Complaint window expired
+                                  </span>
+                                ) : (
+                                  <button
+                                    onClick={() => openComplaintModal(job)}
+                                    className="btn btn-danger"
+                                    style={{ padding: '6px 12px', fontSize: '12px' }}
+                                  >
+                                    🚩 File Complaint
+                                  </button>
+                                );
+                              })()
+                            ) : null}
 
-                          {job.status === 'pending' && job.type === 'daily' && (
-                            <button
-                              onClick={() => {
-                                setActiveJob(job);
-                                setDispatchStatus('searching');
-                                setActiveTab('daily');
-                                setupSocket(job._id);
-                              }}
-                              className="btn btn-secondary"
-                              style={{ padding: '6px 12px', fontSize: '12px' }}
-                            >
-                              Resume Match
-                            </button>
-                          )}
+                            {/* Track Live */}
+                            {['assigned', 'en_route'].includes(job.status) && (
+                              <button
+                                onClick={() => {
+                                  setActiveJob(job);
+                                  setDispatchStatus('accepted');
+                                  if (job.worker) {
+                                    setWorkerDetails(job.worker);
+                                    setWorkerCoords({ latitude: job.worker.latitude, longitude: job.worker.longitude });
+                                  }
+                                  setActiveTab('daily');
+                                  setupSocket(job._id);
+                                }}
+                                className="btn btn-secondary"
+                                style={{ padding: '6px 12px', fontSize: '12px' }}
+                              >
+                                Track Live
+                              </button>
+                            )}
+
+                            {/* Resume Match */}
+                            {job.status === 'pending' && job.type === 'daily' && (
+                              <button
+                                onClick={() => {
+                                  setActiveJob(job);
+                                  setDispatchStatus('searching');
+                                  setActiveTab('daily');
+                                  setupSocket(job._id);
+                                }}
+                                className="btn btn-secondary"
+                                style={{ padding: '6px 12px', fontSize: '12px' }}
+                              >
+                                Resume Match
+                              </button>
+                            )}
+
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -1379,9 +1408,8 @@ export default function CustomerDashboard({ user }) {
       {activeTab === 'complaints' && <CustomerComplaintsPanel />}
 
       {showPaymentModal && activeJob && (
-        <PaymentModal
+        <StripePaymentModal
           job={activeJob}
-          token={localStorage.getItem('token')}
           onSuccess={handlePaymentSuccess}
           onClose={handleClosePayment}
         />

@@ -6,7 +6,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { User, Worker, Job, Message, Complaint } = require('./models');
-const { releaseDuePayments, releaseJobPayment, computePaymentBreakdown } = require('./escrow');
+const { releaseDuePayments, releaseJobPayment, computePaymentBreakdown, refundJobPayment } = require('./escrow');
 
 async function checkAndReleasePayments() {
   return releaseDuePayments();
@@ -489,7 +489,7 @@ router.put('/jobs/:id/assign', authenticateToken, async (req, res) => {
     if (!job) return res.status(404).json({ error: 'Job not found' });
 
     job.worker = workerId;
-    job.status = 'assigned';
+    job.status = 'pending_acceptance'; // New status for construction projects awaiting worker acceptance
     if (amount) {
       job.payment.amount = amount;
     }
@@ -502,6 +502,65 @@ router.put('/jobs/:id/assign', authenticateToken, async (req, res) => {
     res.json({ message: 'Worker assigned successfully', job });
   } catch (error) {
     res.status(500).json({ error: 'Failed to assign worker' });
+  }
+});
+
+// Get construction projects assigned to worker
+router.get('/jobs/worker/construction', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'worker') return res.status(403).json({ error: 'Worker access required' });
+    
+    const jobs = await Job.find({ 
+      worker: req.user.id, 
+      type: 'construction',
+      status: { $in: ['pending_acceptance', 'assigned', 'en_route', 'completed'] }
+    }).populate('customer', 'name email phone').sort({ createdAt: -1 });
+    
+    res.json(jobs);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to load construction projects' });
+  }
+});
+
+// Worker responds to construction project assignment
+router.put('/jobs/:id/worker-response', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'worker') return res.status(403).json({ error: 'Worker access required' });
+    const { action } = req.body; // 'accept' or 'reject'
+
+    const job = await Job.findById(req.params.id);
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    
+    if (String(job.worker) !== req.user.id) {
+      return res.status(403).json({ error: 'This job is not assigned to you' });
+    }
+    
+    if (job.status !== 'pending_acceptance') {
+      return res.status(400).json({ error: 'This job is not pending acceptance' });
+    }
+
+    if (action === 'accept') {
+      job.status = 'assigned';
+      await job.save();
+      res.json({ message: 'Construction project accepted', job });
+    } else if (action === 'reject') {
+      job.worker = null;
+      job.status = 'pending';
+      await job.save();
+      
+      // Decrement worker total requests
+      const worker = await Worker.findById(req.user.id);
+      if (worker) {
+        worker.totalRequests = Math.max(0, worker.totalRequests - 1);
+        await worker.save();
+      }
+      
+      res.json({ message: 'Construction project rejected', job });
+    } else {
+      res.status(400).json({ error: 'Invalid action. Use: accept or reject' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to respond to assignment' });
   }
 });
 
@@ -746,6 +805,24 @@ router.post('/complaints', authenticateToken, upload.single('evidence'), async (
     if (!job) return res.status(404).json({ error: 'Job not found' });
     if (String(job.customer._id) !== req.user.id) return res.status(403).json({ error: 'Unauthorized' });
 
+    // Enforce: job must be paid before filing a complaint
+    if (job.payment.status !== 'paid') {
+      return res.status(400).json({ error: 'You can only file a complaint after the job payment has been made.' });
+    }
+
+    // Enforce: complaint must be filed within 24 hours of payment
+    const COMPLAINT_WINDOW_MS = 24 * 60 * 60 * 1000;
+    const paidAt = job.payment.paidAt ? new Date(job.payment.paidAt) : null;
+    if (paidAt && Date.now() - paidAt.getTime() > COMPLAINT_WINDOW_MS) {
+      return res.status(400).json({ error: 'Complaint window has expired. You can only file a complaint within 24 hours of payment.' });
+    }
+
+    // Prevent duplicate complaints for the same job
+    const existing = await Complaint.findOne({ jobId, customer: req.user.id });
+    if (existing) {
+      return res.status(400).json({ error: 'A complaint for this job has already been submitted.' });
+    }
+
     const evidenceUrl = req.file ? `/uploads/${req.file.filename}` : '';
 
     const complaint = new Complaint({
@@ -761,7 +838,7 @@ router.post('/complaints', authenticateToken, upload.single('evidence'), async (
     });
     await complaint.save();
 
-    // Mark payment as under review
+    // Mark payment as under review to pause automatic release
     job.payment.holdStatus = 'under_review';
     await job.save();
 
@@ -824,14 +901,21 @@ router.put('/admin/complaints/:id/resolve', authenticateToken, async (req, res) 
     complaint.adminNote = adminNote || '';
 
     if (action === 'approve') {
-      const refund = Number(refundAmount) || job.payment.amount;
+      const refundAmt = Number(refundAmount) || job.payment.amount;
       complaint.status = 'approved';
-      complaint.refundAmount = refund;
-      job.payment.holdStatus = 'refunded';
-      job.payment.refundAmount = refund;
-      job.payment.workerAmount = Math.max(0, (job.payment.workerAmount || 0) - refund);
+      complaint.refundAmount = refundAmt;
+      complaint.resolvedAt = new Date();
+      await complaint.save();
+      // Execute Stripe refund and update the job document
+      const updatedJob = await refundJobPayment(job, { refundAmount: refundAmt });
+      return res.json({
+        message: `Complaint approved. Refund of PKR ${refundAmt} issued to customer.`,
+        complaint,
+        job: updatedJob
+      });
     } else {
       complaint.status = 'rejected';
+      complaint.resolvedAt = new Date();
       await complaint.save();
       await releaseJobPayment(job, { force: true });
       return res.json({
@@ -840,11 +924,6 @@ router.put('/admin/complaints/:id/resolve', authenticateToken, async (req, res) 
         job: await Job.findById(job._id)
       });
     }
-
-    await complaint.save();
-    await job.save();
-
-    res.json({ message: `Complaint ${action}d successfully`, complaint, job });
   } catch (error) {
     console.error('Resolve Complaint Error:', error);
     res.status(500).json({ error: 'Failed to resolve complaint' });
