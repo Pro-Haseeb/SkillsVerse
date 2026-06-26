@@ -12,6 +12,11 @@ import {
   Users,
   HardHat,
   Wrench,
+  Play,
+  Navigation,
+  MessageSquare,
+  Clock,
+  Lock,
 } from 'lucide-react';
 
 const STATS = [
@@ -90,6 +95,54 @@ const FEATURES = [
   },
 ];
 
+const FEATURED_VIDEO = {
+  id: 1,
+  title: 'Getting Started with Skillsverse',
+  description: 'Learn how to create your account, navigate the dashboard, and book your first service in under 5 minutes. This comprehensive guide covers everything from registration to completing your first booking.',
+  duration: '4:32',
+  thumbnail: 'https://images.unsplash.com/photo-1551434678-e076c223a692?w=1200&h=675&fit=crop',
+  category: 'Beginner Guide'
+};
+
+const PRODUCT_TOUR = [
+  {
+    icon: Mic,
+    title: 'Voice-Powered Requests',
+    purpose: 'Describe your issue naturally using voice recording instead of typing. Perfect for explaining complex problems quickly.',
+    benefit: 'Saves time and ensures accurate communication of your service needs.'
+  },
+  {
+    icon: Navigation,
+    title: 'Live GPS Tracking',
+    purpose: 'Watch your worker move toward your location in real-time on an interactive map with ETA updates.',
+    benefit: 'Complete transparency and peace of mind knowing exactly when help will arrive.'
+  },
+  {
+    icon: MessageSquare,
+    title: 'In-App Chat System',
+    purpose: 'Communicate directly with your worker through text or voice messages without sharing personal contact details.',
+    benefit: 'Maintains privacy while enabling clear coordination throughout the service.'
+  },
+  {
+    icon: Lock,
+    title: 'Secure Escrow Payments',
+    purpose: 'Your payment is held securely and only released to the worker after you confirm satisfactory work completion.',
+    benefit: 'Zero risk - you only pay for services that meet your satisfaction standards.'
+  },
+  {
+    icon: Clock,
+    title: '24/7 Instant Dispatch',
+    purpose: 'Our intelligent matching system finds and dispatches the nearest available worker within 3 minutes on average.',
+    benefit: 'No more waiting - get help whenever you need it, day or night.'
+  },
+  {
+    icon: Shield,
+    title: 'Verified Professional Network',
+    purpose: 'Every worker undergoes admin verification including skills assessment and background checks.',
+    benefit: 'Trust that only qualified, reliable professionals are sent to your home.'
+  },
+];
+
 export default function Home({ user }) {
   const navigate = useNavigate();
 
@@ -147,6 +200,37 @@ export default function Home({ user }) {
               <span className="home-stat__label">{label}</span>
             </div>
           ))}
+        </div>
+      </section>
+
+      {/* Featured Video */}
+      <section className="home-section">
+        <div className="home-featured-video">
+          <div className="home-featured-video__thumbnail">
+            <img 
+              src={FEATURED_VIDEO.thumbnail} 
+              alt={FEATURED_VIDEO.title}
+              loading="lazy"
+            />
+            <div className="home-featured-video__overlay">
+              <button className="home-featured-video__play" aria-label="Play video">
+                <Play size={32} />
+              </button>
+              <span className="home-featured-video__duration">{FEATURED_VIDEO.duration}</span>
+            </div>
+            <span className="home-featured-video__category">{FEATURED_VIDEO.category}</span>
+          </div>
+          <div className="home-featured-video__content">
+            <div className="home-section__header" style={{ textAlign: 'left', marginBottom: '20px' }}>
+              <p className="home-section__eyebrow">Featured Tutorial</p>
+              <h2 className="home-section__title">{FEATURED_VIDEO.title}</h2>
+            </div>
+            <p className="home-featured-video__description">{FEATURED_VIDEO.description}</p>
+            <button className="btn btn-primary btn-lg" style={{ marginTop: '24px' }}>
+              <Play size={18} />
+              Watch Tutorial
+            </button>
+          </div>
         </div>
       </section>
 
@@ -231,6 +315,39 @@ export default function Home({ user }) {
               <p>{description}</p>
             </article>
           ))}
+        </div>
+      </section>
+
+      {/* Product Tour */}
+      <section className="home-section home-section--muted">
+        <div className="home-section__header">
+          <p className="home-section__eyebrow">Product tour</p>
+          <h2 className="home-section__title">Explore Skillsverse features</h2>
+          <p className="home-section__subtitle">
+            Discover how each feature is designed to solve real problems and make your life easier.
+          </p>
+        </div>
+        <div className="home-tour-grid">
+          {PRODUCT_TOUR.map((feature, index) => {
+            const Icon = feature.icon;
+            return (
+              <article key={feature.title} className="home-tour-card">
+                <div className="home-tour-card__number">{String(index + 1).padStart(2, '0')}</div>
+                <div className="home-tour-card__icon">
+                  <Icon size={28} />
+                </div>
+                <h4>{feature.title}</h4>
+                <div className="home-tour-card__purpose">
+                  <span className="home-tour-card__label">What it does:</span>
+                  <p>{feature.purpose}</p>
+                </div>
+                <div className="home-tour-card__benefit">
+                  <span className="home-tour-card__label">Why it matters:</span>
+                  <p>{feature.benefit}</p>
+                </div>
+              </article>
+            );
+          })}
         </div>
       </section>
 

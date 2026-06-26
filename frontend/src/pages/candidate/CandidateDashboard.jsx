@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import io from 'socket.io-client';
-import { Mic, MicOff, Send, Phone, MapPin, CheckCircle, CreditCard, Play, MessageSquare, ShieldAlert, Clock } from 'lucide-react';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import { Mic, MicOff, Send, Phone, MapPin, CheckCircle, CreditCard, Play, MessageSquare, ShieldAlert, Clock, Navigation, Route, X } from 'lucide-react';
+import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline } from 'react-leaflet';
 import L from 'leaflet';
 import { API_URL } from '../../App';
 import { useToast } from '../../context/ToastContext';
@@ -74,6 +74,8 @@ export default function CustomerDashboard({ user }) {
   const [dispatchStatus, setDispatchStatus] = useState(''); // 'searching', 'accepted', 'declined', 'failed', 'completed'
   const [workerDetails, setWorkerDetails] = useState(null);
   const [workerCoords, setWorkerCoords] = useState(null);
+  const [distanceToWorker, setDistanceToWorker] = useState(null);
+  const [etaMinutes, setEtaMinutes] = useState(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [complaints, setComplaints] = useState([]);
   const [complaintMap, setComplaintMap] = useState({});
@@ -327,6 +329,29 @@ export default function CustomerDashboard({ user }) {
       if (socketRef.current) socketRef.current.disconnect();
     };
   }, []);
+
+  // Calculate distance and ETA when worker coordinates update
+  useEffect(() => {
+    if (workerCoords && workerCoords.latitude && workerCoords.longitude) {
+      // Calculate distance using Haversine formula
+      const R = 6371; // Earth's radius in km
+      const dLat = (workerCoords.latitude - latitude) * (Math.PI / 180);
+      const dLon = (workerCoords.longitude - longitude) * (Math.PI / 180);
+      const a = 
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(latitude * (Math.PI / 180)) * Math.cos(workerCoords.latitude * (Math.PI / 180)) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      const distance = R * c; // Distance in km
+      
+      setDistanceToWorker(distance);
+      
+      // Estimate ETA (assuming average speed of 30 km/h in urban areas)
+      const avgSpeedKmh = 30;
+      const eta = distance / avgSpeedKmh * 60; // ETA in minutes
+      setEtaMinutes(Math.round(eta));
+    }
+  }, [workerCoords, latitude, longitude]);
 
   // Mic/Voice Recorder Logic
   const startRecording = async () => {
@@ -668,9 +693,31 @@ export default function CustomerDashboard({ user }) {
     }
   };
 
-  const handleCompleteJob = async () => {
-    if (!activeJob?._id) return;
+  const handleRejectJob = async () => {
+    if (!activeJob) return;
+    try {
+      const response = await fetch(`${API_URL}/api/jobs/${activeJob._id}/reject`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      const data = await response.json();
+      if (response.ok) {
+        toast.success('Job rejected successfully');
+        resetActiveJobState();
+        loadHistory();
+      } else {
+        toast.error(data.error || 'Failed to reject job');
+      }
+    } catch (error) {
+      console.error('Failed to reject job:', error);
+      toast.error('Failed to reject job');
+    }
+  };
 
+  const handleCompleteJob = async () => {
+    if (!activeJob) return;
     try {
       const response = await fetch(`${API_URL}/api/jobs/${activeJob._id}/status`, {
         method: 'PUT',
@@ -682,16 +729,15 @@ export default function CustomerDashboard({ user }) {
       });
       const data = await response.json();
       if (response.ok) {
+        toast.success('Job marked as completed');
         setDispatchStatus('completed');
-        setActiveJob(prev => prev ? { ...prev, status: 'completed' } : prev);
-        toast.success('Work marked as completed. You can now release payment.');
-        loadHistory();
+        setActiveJob(data.job);
       } else {
-        toast.error(data.error || 'Failed to mark work as completed.');
+        toast.error(data.error || 'Failed to complete job');
       }
     } catch (error) {
-      console.error(error);
-      toast.error('Failed to mark work as completed.');
+      console.error('Failed to complete job:', error);
+      toast.error('Failed to complete job');
     }
   };
 
@@ -943,6 +989,62 @@ export default function CustomerDashboard({ user }) {
                     </div>
                   )}
 
+                  {/* Tracking Info Overlay */}
+                  {dispatchStatus === 'accepted' && workerCoords && (
+                    <div 
+                      style={{
+                        position: 'absolute',
+                        top: '12px',
+                        left: '12px',
+                        right: '12px',
+                        background: 'rgba(12, 12, 14, 0.9)',
+                        backdropFilter: 'blur(10px)',
+                        borderRadius: '12px',
+                        padding: '12px 16px',
+                        zIndex: 1000,
+                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: '12px'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <div style={{ 
+                          width: '40px', 
+                          height: '40px', 
+                          borderRadius: '50%', 
+                          background: 'linear-gradient(135deg, var(--primary-orange), #ff6b35)',
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          justifyContent: 'center' 
+                        }}>
+                          <Navigation size={20} color="#fff" />
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '14px', fontWeight: '700', color: '#fff' }}>
+                            {workerDetails?.name || 'Worker'} is on the way
+                          </div>
+                          <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                            {distanceToWorker !== null ? `${distanceToWorker.toFixed(1)} km away` : 'Calculating distance...'}
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ 
+                        background: 'rgba(34, 197, 94, 0.15)', 
+                        border: '1px solid rgba(34, 197, 94, 0.3)', 
+                        borderRadius: '8px', 
+                        padding: '8px 12px',
+                        textAlign: 'center'
+                      }}>
+                        <div style={{ fontSize: '11px', color: '#86efac', textTransform: 'uppercase', letterSpacing: '0.05em' }}>ETA</div>
+                        <div style={{ fontSize: '18px', fontWeight: '700', color: '#fff' }}>
+                          {etaMinutes !== null ? `${etaMinutes} min` : '--'}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   <MapContainer 
                     center={[latitude, longitude]} 
                     zoom={14} 
@@ -955,17 +1057,31 @@ export default function CustomerDashboard({ user }) {
                     
                     {/* Customer Marker (Orange Pin) */}
                     <Marker position={[latitude, longitude]} icon={customerIcon}>
-                      <Popup>Your booking request location</Popup>
+                      <Popup>Your location</Popup>
                     </Marker>
 
                     {/* Worker Marker (Green Pin, updates in real time) */}
                     {workerCoords && workerCoords.latitude !== undefined && workerCoords.longitude !== undefined && (
-                      <Marker position={[workerCoords.latitude, workerCoords.longitude]} icon={workerIcon}>
-                        <Popup>
-                          <strong>{workerDetails?.name || 'Worker'}</strong> <br />
-                          En route to your location.
-                        </Popup>
-                      </Marker>
+                      <>
+                        <Marker position={[workerCoords.latitude, workerCoords.longitude]} icon={workerIcon}>
+                          <Popup>
+                            <strong>{workerDetails?.name || 'Worker'}</strong> <br />
+                            En route to your location.
+                          </Popup>
+                        </Marker>
+                        
+                        {/* Route line between worker and customer */}
+                        <Polyline 
+                          positions={[
+                            [workerCoords.latitude, workerCoords.longitude],
+                            [latitude, longitude]
+                          ]}
+                          color="var(--primary-orange)"
+                          weight={4}
+                          opacity={0.7}
+                          dashArray="10, 10"
+                        />
+                      </>
                     )}
 
                     {/* Dynamic Map Auto-centering component */}
@@ -973,13 +1089,33 @@ export default function CustomerDashboard({ user }) {
                   </MapContainer>
                 </div>
 
-                {/* Cancel option */}
-                <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                {/* Cancel/Complete/Reject options */}
+                <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
                   <button className="btn btn-secondary" onClick={handleCancelJob}>
                     Cancel Booking / Return
                   </button>
                   {dispatchStatus === 'searching' && (
                     <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Hold tight, matching you...</span>
+                  )}
+                  {dispatchStatus === 'accepted' && (
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                      <button 
+                        onClick={handleCompleteJob}
+                        className="btn btn-primary"
+                        style={{ padding: '8px 16px', fontSize: '13px' }}
+                      >
+                        <CheckCircle size={14} style={{ marginRight: '6px' }} />
+                        Complete Job
+                      </button>
+                      <button 
+                        onClick={handleRejectJob}
+                        className="btn btn-secondary"
+                        style={{ padding: '8px 16px', fontSize: '13px', borderColor: 'var(--error-color)', color: 'var(--error-color)' }}
+                      >
+                        <X size={14} style={{ marginRight: '6px' }} />
+                        Reject
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1019,6 +1155,13 @@ export default function CustomerDashboard({ user }) {
                     <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '12px' }}>
                       <strong>PKR {activeJob?.payment?.amount?.toLocaleString() || '1,500'}</strong> is held in Skillsverse Vault. Pay securely via card once the service is complete.
                     </p>
+                    <div style={{ marginBottom: '12px', padding: '10px', background: 'var(--bg-input)', borderRadius: '8px', border: '1px solid var(--border-grey)' }}>
+                      <span style={{ fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '4px' }}>Payment Method</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <CreditCard size={14} color="var(--primary-orange)" />
+                        <span style={{ fontSize: '13px', color: '#fff' }}>Stripe Card Payment</span>
+                      </div>
+                    </div>
                     {activeJob?.payment?.status === 'paid' ? (
                       <div style={{ display: 'flex', gap: '8px', alignItems: 'center', color: 'var(--success-color)', fontSize: '13px', fontWeight: 700 }}>
                         <CheckCircle size={15} />

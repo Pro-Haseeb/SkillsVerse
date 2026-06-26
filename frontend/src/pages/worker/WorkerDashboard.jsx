@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
-import { MapPin, Phone, CheckCircle, Navigation, Send, AlertTriangle, MessageSquare, Mic, ListChecks, CreditCard, Briefcase, User, Map, Check, X, Hammer } from 'lucide-react';
+import { MapPin, Phone, CheckCircle, Navigation, Send, AlertTriangle, MessageSquare, Mic, ListChecks, CreditCard, Briefcase, User, Map, Check, X, Hammer, X as XIcon } from 'lucide-react';
 import { API_URL } from '../../App';
 import { useToast } from '../../context/ToastContext';
 import DashboardLayout from '../../components/shared/DashboardLayout';
@@ -394,6 +394,28 @@ export default function WorkerDashboard({ user }) {
     } catch (error) {
       console.error('Failed to respond to construction assignment:', error);
       toast.error('Failed to respond to assignment');
+    }
+  };
+
+  const handleRejectJob = async () => {
+    if (!activeJob) return;
+    try {
+      const response = await fetch(`${API_URL}/api/jobs/${activeJob._id}/reject`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      const data = await response.json();
+      if (response.ok) {
+        toast.success('Job rejected successfully');
+        clearJobState();
+      } else {
+        toast.error(data.error || 'Failed to reject job');
+      }
+    } catch (error) {
+      console.error('Failed to reject job:', error);
+      toast.error('Failed to reject job');
     }
   };
 
@@ -872,6 +894,14 @@ export default function WorkerDashboard({ user }) {
                           style={{ width: '100%', padding: '12px' }}
                         >
                           Arrived at customer
+                        </button>
+                        <button 
+                          onClick={handleRejectJob}
+                          className="btn btn-secondary"
+                          style={{ width: '100%', padding: '12px', borderColor: 'var(--error-color)', color: 'var(--error-color)' }}
+                        >
+                          <XIcon size={16} style={{ marginRight: '6px' }} />
+                          Reject Job
                         </button>
                       </>
                     )}

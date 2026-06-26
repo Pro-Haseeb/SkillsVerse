@@ -15,15 +15,16 @@ const ESCROW_CHECK_MS = Number(process.env.ESCROW_CHECK_INTERVAL_MS) || 60 * 60 
 
 const app = express();
 const server = http.createServer(app);
+const corsOrigin = process.env.CORS_ORIGIN || '*';
 const io = socketIo(server, {
   cors: {
-    origin: '*',
+    origin: corsOrigin,
     methods: ['GET', 'POST', 'PUT', 'DELETE']
   }
 });
 
 // Middlewares
-app.use(cors());
+app.use(cors({ origin: corsOrigin }));
 app.use(express.json());
 
 // Serve uploaded voice audio files
@@ -45,7 +46,11 @@ app.get('/', (req, res) => {
 socketHandler(io);
 
 // DB Connection
-const MONGO_URI = process.env.MONGO_URI || 'mongodb+srv://Haseeb:haseeb123@cluster0.eg6vwrs.mongodb.net/skillverse?appName=Cluster0';
+const MONGO_URI = process.env.MONGO_URI;
+if (!MONGO_URI) {
+  console.error('Error: MONGO_URI environment variable is not set. Please configure it in your .env file.');
+  process.exit(1);
+}
 console.log('Connecting to MongoDB...');
 
 mongoose.connect(MONGO_URI)

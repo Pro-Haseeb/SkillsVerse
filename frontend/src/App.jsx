@@ -10,7 +10,7 @@ import CustomerDashboard from './pages/candidate/CandidateDashboard';
 import WorkerDashboard from './pages/worker/WorkerDashboard';
 import AdminDashboard from './pages/admin/AdminDashboard';
 
-export const API_URL = 'http://localhost:5000';
+export const API_URL = import.meta.env.VITE_API_URL || 'https://skillsverse-8x82.onrender.com';
 
 function Navigation({ user, logout }) {
   const navigate = useNavigate();

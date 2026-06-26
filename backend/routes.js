@@ -616,6 +616,49 @@ router.put('/jobs/:id/status', authenticateToken, async (req, res) => {
   }
 });
 
+// Reject Job — both customer and worker can reject, resets job to pending
+router.put('/jobs/:id/reject', authenticateToken, async (req, res) => {
+  try {
+    const job = await Job.findById(req.params.id);
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+
+    if (req.user.role === 'worker') {
+      if (String(job.worker) !== req.user.id) {
+        return res.status(403).json({ error: 'You are not assigned to this job' });
+      }
+    } else if (req.user.role === 'customer') {
+      if (String(job.customer) !== req.user.id) {
+        return res.status(403).json({ error: 'This is not your job' });
+      }
+    } else {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    // Reset job to pending state
+    const previousWorker = job.worker;
+    job.worker = null;
+    job.status = 'pending';
+    await job.save();
+
+    // Decrement worker's total requests if they had the job
+    if (previousWorker) {
+      await Worker.findByIdAndUpdate(previousWorker, {
+        $inc: { totalRequests: -1 },
+        isAvailable: true
+      });
+    }
+
+    const io = req.app.get('io');
+    if (io) {
+      io.to(String(job._id)).emit('job_rejected', { jobId: job._id });
+    }
+
+    res.json({ message: 'Job rejected and reset to pending', job });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to reject job' });
+  }
+});
+
 // Cancel Job (Customer)
 router.put('/jobs/:id/cancel', authenticateToken, async (req, res) => {
   try {
