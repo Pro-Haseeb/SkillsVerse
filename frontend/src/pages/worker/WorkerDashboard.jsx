@@ -444,6 +444,16 @@ export default function WorkerDashboard({ user }) {
       }
     });
 
+    // Job rejected (by customer or worker) — clear active job
+    socket.on('job_rejected', ({ jobId }) => {
+      const matchesActive = activeJobRef.current && String(activeJobRef.current._id) === String(jobId);
+      if (matchesActive) {
+        clearJobState();
+        toast.info('Job has been rejected and returned to pending');
+        loadWorkerHistory();
+      }
+    });
+
     // Job completed by customer
     socket.on('job_status_updated', ({ status }) => {
       if (status === 'completed' && activeJobRef.current) {

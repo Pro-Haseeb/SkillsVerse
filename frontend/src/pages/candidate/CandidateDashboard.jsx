@@ -314,6 +314,20 @@ export default function CustomerDashboard({ user }) {
       toast.info(data.message);
     });
 
+    // Listen for job rejection (by worker or customer)
+    socket.on('job_rejected', (data) => {
+      resetActiveJobState();
+      toast.info('Job has been rejected and returned to pending');
+      loadHistory();
+    });
+
+    // Listen for job cancellation (by customer)
+    socket.on('job_cancelled', (data) => {
+      resetActiveJobState();
+      toast.info('Job has been cancelled');
+      loadHistory();
+    });
+
     // Fetch message history for the room
     fetch(`${API_URL}/api/jobs/${jobId}/messages`, {
       headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
