@@ -18,6 +18,23 @@ export default function WorkerSidebar({
   profileRef,
   availabilityRef,
 }) {
+  const isContractorUser = Boolean(
+    (Array.isArray(profile?.skills) && profile.skills.includes('Contractor')) ||
+    profile?.isContractor ||
+    profile?.contractorProfile?.status === 'pending' ||
+    profile?.contractorProfile?.status === 'approved' ||
+    profile?.contractorProfile?.status === 'rejected'
+  );
+
+  const visibleTabs = isContractorUser
+    ? [
+        ...WORKER_TABS.slice(0, 3),
+        { id: 'contractor-offers', label: 'Contractor Offers', icon: Briefcase },
+        { id: 'contractor-projects', label: 'Contractor Projects', icon: Hammer },
+        ...WORKER_TABS.slice(3),
+      ]
+    : WORKER_TABS;
+
   return (
     <aside className="dashboard-sidebar">
       <div className="sidebar-panel sidebar-panel--worker">
@@ -26,13 +43,13 @@ export default function WorkerSidebar({
             <HardHat size={22} />
           </div>
           <div>
-            <p className="sidebar-role">Worker</p>
+            <p className="sidebar-role">{isContractorUser ? 'Contractor' : 'Worker'}</p>
             <h3 className="sidebar-title">Workspace</h3>
           </div>
         </div>
 
         <nav className="sidebar-items" aria-label="Worker navigation">
-          {WORKER_TABS.map((item) => {
+          {visibleTabs.map((item) => {
             const Icon = item.icon;
             const showLiveBadge = item.id === 'active-job' && hasActiveJob;
             return (
@@ -58,7 +75,7 @@ export default function WorkerSidebar({
             <div className="sidebar-profile__info">
               <p className="sidebar-profile__name">{profile?.name || 'Worker'}</p>
               <p className="sidebar-profile__meta">
-                {profile?.skills?.length || 0} skill{(profile?.skills?.length || 0) !== 1 ? 's' : ''} registered
+                {isContractorUser ? 'Contractor profile active' : `${profile?.skills?.length || 0} skill${(profile?.skills?.length || 0) !== 1 ? 's' : ''} registered`}
               </p>
             </div>
           </div>

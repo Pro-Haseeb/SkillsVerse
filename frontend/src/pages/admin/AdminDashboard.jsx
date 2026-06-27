@@ -37,6 +37,7 @@ export default function AdminDashboard({ user }) {
 
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('overview');
+  const [workerRoleFilter, setWorkerRoleFilter] = useState('all');
 
   useEffect(() => {
     loadAdminData();
@@ -105,6 +106,29 @@ export default function AdminDashboard({ user }) {
     } catch (error) {
       console.error(error);
       toast.error('Failed to update worker status.');
+    }
+  };
+
+  const handleContractorApproval = async (workerId, contractorStatus) => {
+    try {
+      const response = await fetch(`${API_URL}/api/admin/workers/${workerId}/contractor-approval`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({ contractorStatus })
+      });
+      if (response.ok) {
+        toast.success(`Contractor profile ${contractorStatus}.`);
+        loadAdminData();
+      } else {
+        const data = await response.json();
+        toast.error(data.error || 'Failed to update contractor profile status.');
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to update contractor profile status.');
     }
   };
 
@@ -300,15 +324,22 @@ export default function AdminDashboard({ user }) {
 
   const getPaginatedItems = (items, page) => items.slice((page - 1) * itemsPerPage, page * itemsPerPage);
   const getTotalPages = (items) => Math.max(1, Math.ceil(items.length / itemsPerPage));
+  const isContractorRole = (worker) => Array.isArray(worker.skills) && worker.skills.includes('Contractor');
 
-  const visibleWorkers = getPaginatedItems(workers, workerPage);
+  const filteredWorkers = workers.filter((worker) => {
+    if (workerRoleFilter === 'contractor') return isContractorRole(worker);
+    if (workerRoleFilter === 'worker') return !isContractorRole(worker);
+    return true;
+  });
+
+  const visibleWorkers = getPaginatedItems(filteredWorkers, workerPage);
   const visibleCustomers = getPaginatedItems(customers, customerPage);
   const visibleServiceHistory = getPaginatedItems(allJobs, serviceHistoryPage);
   const visibleConstructionJobs = getPaginatedItems(constructionJobs, constructionPage);
   const visibleEscrowJobs = getPaginatedItems(allJobs, escrowPage);
   const visibleComplaints = getPaginatedItems(complaints, complaintPage);
 
-  const workerTotalPages = getTotalPages(workers);
+  const workerTotalPages = getTotalPages(filteredWorkers);
   const customerTotalPages = getTotalPages(customers);
   const serviceHistoryTotalPages = getTotalPages(allJobs);
   const constructionTotalPages = getTotalPages(constructionJobs);
@@ -317,8 +348,13 @@ export default function AdminDashboard({ user }) {
 
   // Dropdown helper to filter approved workers by matching category skills
   const getMatchingWorkers = (category) => {
-    // Map construction categories to matching worker skills if needed, or simple string match
-    return workers.filter(w => w.status === 'approved' && !w.isBlocked && w.skills.includes(category));
+    // For construction jobs, only show workers who have Contractor skill
+    return workers.filter(w => 
+      w.status === 'approved' && 
+      !w.isBlocked && 
+      w.skills.includes('Contractor') &&
+      w.skills.includes(category)
+    );
   };
 
   const pageMeta = {
@@ -432,7 +468,9 @@ export default function AdminDashboard({ user }) {
                           </div>
                         </td>
                         <td style={{ padding: '12px' }}>
-                          {w.isConstructor ? (
+                          {isContractorRole(w) ? (
+                            <StatusBadge status="info" label="Contractor" />
+                          ) : w.isConstructor ? (
                             <StatusBadge status="info" label="Constructor" />
                           ) : (
                             <StatusBadge status="info" label="Worker" />
@@ -442,7 +480,38 @@ export default function AdminDashboard({ user }) {
                           <StatusBadge status={w.status} />
                         </td>
                         <td style={{ padding: '12px' }}>
-                          {w.constructorDetails?.status === 'pending' ? (
+                          {isContractorRole(w) ? (
+                            <div style={{ display: 'grid', gap: '6px' }}>
+                              <StatusBadge
+                                status={w.contractorProfile?.status === 'approved' ? 'success' : w.contractorProfile?.status === 'rejected' ? 'error' : w.contractorProfile?.status === 'pending' ? 'pending' : 'info'}
+                                label={w.contractorProfile?.status === 'approved' ? 'Approved' : w.contractorProfile?.status === 'rejected' ? 'Rejected' : w.contractorProfile?.status === 'pending' ? 'Pending Review' : 'No Request'}
+                              />
+                              {w.contractorProfile?.status === 'pending' && (
+                                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                  <button
+                                    onClick={() => handleContractorApproval(w._id, 'approved')}
+                                    className="btn btn-primary"
+                                    style={{ padding: '6px 10px', fontSize: '11px', background: 'var(--success-color)' }}
+                                  >
+                                    <Check size={12} /> Approve
+                                  </button>
+                                  <button
+                                    onClick={() => handleContractorApproval(w._id, 'rejected')}
+                                    className="btn btn-danger"
+                                    style={{ padding: '6px 10px', fontSize: '11px' }}
+                                  >
+                                    <X size={12} /> Reject
+                                  </button>
+                                </div>
+                              )}
+                              {(w.contractorProfile?.companyName || w.contractorProfile?.serviceArea) && (
+                                <div style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                                  {w.contractorProfile?.companyName && <div><strong>Company:</strong> {w.contractorProfile.companyName}</div>}
+                                  {w.contractorProfile?.serviceArea && <div><strong>Area:</strong> {w.contractorProfile.serviceArea}</div>}
+                                </div>
+                              )}
+                            </div>
+                          ) : w.constructorDetails?.status === 'pending' ? (
                             <div style={{ display: 'grid', gap: '6px' }}>
                               <StatusBadge status="pending" label="Pending Review" />
                               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>

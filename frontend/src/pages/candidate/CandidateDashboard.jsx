@@ -2,9 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import io from 'socket.io-client';
 import { Mic, MicOff, Send, Phone, MapPin, CheckCircle, CreditCard, Play, MessageSquare, ShieldAlert, Clock, Navigation, Route, X } from 'lucide-react';
-import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline } from 'react-leaflet';
-import L from 'leaflet';
 import { API_URL } from '../../App';
+import LiveTrackingMap from '../../components/shared/LiveTrackingMap';
 import { useToast } from '../../context/ToastContext';
 import DashboardLayout from '../../components/shared/DashboardLayout';
 import CandidateSidebar from '../../components/candidate/CandidateSidebar';
@@ -15,35 +14,6 @@ import Pagination from '../../components/shared/Pagination';
 import { TableSkeleton } from '../../components/shared/LoadingSkeleton';
 import StripePaymentModal from '../../components/candidate/StripePaymentModal';
 import ComplaintModal from '../../components/candidate/ComplaintModal';
-
-// Custom Map Pins for Leaflet
-const customerIcon = new L.Icon({
-  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-orange.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41]
-});
-
-const workerIcon = new L.Icon({
-  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41]
-});
-
-function RecenterMap({ lat, lon }) {
-  const map = useMap();
-  useEffect(() => {
-    if (lat && lon) {
-      map.setView([lat, lon], map.getZoom());
-    }
-  }, [lat, lon, map]);
-  return null;
-}
 
 export default function CustomerDashboard({ user }) {
   const routerLocation = useLocation();
@@ -76,6 +46,8 @@ export default function CustomerDashboard({ user }) {
   const [workerCoords, setWorkerCoords] = useState(null);
   const [distanceToWorker, setDistanceToWorker] = useState(null);
   const [etaMinutes, setEtaMinutes] = useState(null);
+  const [trackingDistance, setTrackingDistance] = useState(null);
+  const [trackingEta, setTrackingEta] = useState(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [complaints, setComplaints] = useState([]);
   const [complaintMap, setComplaintMap] = useState({});
@@ -143,6 +115,34 @@ export default function CustomerDashboard({ user }) {
       { enableHighAccuracy: true, timeout: 10000 }
     );
   };
+
+  const updateTrackingStats = (coords) => {
+    if (!activeJob?.location?.latitude || !activeJob?.location?.longitude || !coords?.latitude || !coords?.longitude) {
+      return;
+    }
+
+    const toLat = Number(activeJob.location.latitude);
+    const toLon = Number(activeJob.location.longitude);
+    const fromLat = Number(coords.latitude);
+    const fromLon = Number(coords.longitude);
+    const R = 6371;
+    const dLat = (toLat - fromLat) * Math.PI / 180;
+    const dLon = (toLon - fromLon) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(fromLat * Math.PI / 180) * Math.cos(toLat * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const distance = R * c;
+
+    setTrackingDistance(distance);
+    setTrackingEta(Math.max(1, Math.round(distance * 5)));
+    setDistanceToWorker(distance);
+    setEtaMinutes(Math.max(1, Math.round(distance * 5)));
+  };
+
+  useEffect(() => {
+    if (workerCoords) {
+      updateTrackingStats(workerCoords);
+    }
+  }, [workerCoords, activeJob?.location?.latitude, activeJob?.location?.longitude]);
 
   // Fetch GPS on component mount
   useEffect(() => {
@@ -278,6 +278,14 @@ export default function CustomerDashboard({ user }) {
     socket.emit('register', user.id);
     socket.emit('join_job', jobId);
 
+    socket.on('connect_error', () => {
+      toast.error('Connection lost. Tracking updates may pause until the network reconnects.');
+    });
+
+    socket.on('disconnect', () => {
+      toast.info('Tracking connection temporarily disconnected.');
+    });
+
     // Listen for worker accepted
     socket.on('job_accepted', (data) => {
       setDispatchStatus('accepted');
@@ -292,6 +300,7 @@ export default function CustomerDashboard({ user }) {
     // Listen for real time worker location updates
     socket.on('worker_location_updated', (coords) => {
       setWorkerCoords(coords);
+      updateTrackingStats(coords);
     });
 
     // Listen for job status change
@@ -1059,48 +1068,21 @@ export default function CustomerDashboard({ user }) {
                     </div>
                   )}
 
-                  <MapContainer 
-                    center={[latitude, longitude]} 
-                    zoom={14} 
-                    style={{ height: '100%', width: '100%' }}
-                  >
-                    <TileLayer
-                      attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                    />
-                    
-                    {/* Customer Marker (Orange Pin) */}
-                    <Marker position={[latitude, longitude]} icon={customerIcon}>
-                      <Popup>Your location</Popup>
-                    </Marker>
-
-                    {/* Worker Marker (Green Pin, updates in real time) */}
-                    {workerCoords && workerCoords.latitude !== undefined && workerCoords.longitude !== undefined && (
-                      <>
-                        <Marker position={[workerCoords.latitude, workerCoords.longitude]} icon={workerIcon}>
-                          <Popup>
-                            <strong>{workerDetails?.name || 'Worker'}</strong> <br />
-                            En route to your location.
-                          </Popup>
-                        </Marker>
-                        
-                        {/* Route line between worker and customer */}
-                        <Polyline 
-                          positions={[
-                            [workerCoords.latitude, workerCoords.longitude],
-                            [latitude, longitude]
-                          ]}
-                          color="var(--primary-orange)"
-                          weight={4}
-                          opacity={0.7}
-                          dashArray="10, 10"
-                        />
-                      </>
-                    )}
-
-                    {/* Dynamic Map Auto-centering component */}
-                    <RecenterMap lat={workerCoords && workerCoords.latitude !== undefined ? workerCoords.latitude : latitude} lon={workerCoords && workerCoords.longitude !== undefined ? workerCoords.longitude : longitude} />
-                  </MapContainer>
+                  <LiveTrackingMap
+                    role="customer"
+                    customerLocation={{ latitude, longitude }}
+                    workerLocation={workerCoords}
+                    onRouteInfo={({ distanceKm, etaMinutes }) => {
+                      if (distanceKm !== null && etaMinutes !== null) {
+                        setTrackingDistance(distanceKm);
+                        setTrackingEta(etaMinutes);
+                        setDistanceToWorker(distanceKm);
+                        setEtaMinutes(etaMinutes);
+                      }
+                    }}
+                    height="100%"
+                    initialCenter={[latitude, longitude]}
+                  />
                 </div>
 
                 {/* Cancel/Complete/Reject options */}

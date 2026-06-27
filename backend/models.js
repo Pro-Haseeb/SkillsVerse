@@ -28,6 +28,13 @@ const WorkerSchema = new Schema({
     requestedAt: { type: Date, default: null },
     status: { type: String, enum: ['none', 'pending', 'approved', 'rejected'], default: 'none' }
   },
+  contractorProfile: {
+    companyName: { type: String, default: '' },
+    experienceYears: { type: Number, default: 0 },
+    specialization: { type: String, default: '' },
+    serviceArea: { type: String, default: '' },
+    status: { type: String, enum: ['none', 'pending', 'approved', 'rejected'], default: 'none' }
+  },
   latitude: { type: Number, default: 24.8607 },  // Default coordinates (e.g. Karachi-like center)
   longitude: { type: Number, default: 67.0011 },
   totalRequests: { type: Number, default: 0 },
@@ -54,6 +61,12 @@ const JobSchema = new Schema({
     type: String, 
     enum: ['pending', 'pending_acceptance', 'assigned', 'en_route', 'completed', 'cancelled'], 
     default: 'pending' 
+  },
+  tracking: {
+    active: { type: Boolean, default: false },
+    lastUpdatedAt: { type: Date, default: null },
+    distanceKm: { type: Number, default: 0 },
+    etaMinutes: { type: Number, default: 0 }
   },
   payment: {
     amount: { type: Number, default: 0 },

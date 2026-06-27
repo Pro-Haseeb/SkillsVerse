@@ -182,13 +182,28 @@ module.exports = (io) => {
     });
 
     // Worker coordinates tracking update (live GPS)
-    socket.on('update_worker_location', async ({ jobId, workerId, latitude, longitude }) => {
+    socket.on('update_worker_location', async ({ jobId, workerId, latitude, longitude, distanceKm, etaMinutes }) => {
       try {
-        // Save to DB
-        await Worker.findByIdAndUpdate(workerId, { latitude, longitude });
+        const parsedLatitude = Number(latitude);
+        const parsedLongitude = Number(longitude);
 
-        // Broadcast updated coordinates to the room (customer)
-        io.to(jobId).emit('worker_location_updated', { latitude, longitude });
+        if (!Number.isFinite(parsedLatitude) || !Number.isFinite(parsedLongitude)) {
+          return;
+        }
+
+        await Promise.all([
+          Worker.findByIdAndUpdate(workerId, { latitude: parsedLatitude, longitude: parsedLongitude }),
+          Job.findByIdAndUpdate(jobId, {
+            $set: {
+              'tracking.active': true,
+              'tracking.lastUpdatedAt': new Date(),
+              'tracking.distanceKm': Number(distanceKm) || 0,
+              'tracking.etaMinutes': Number(etaMinutes) || 0
+            }
+          })
+        ]);
+
+        io.to(jobId).emit('worker_location_updated', { latitude: parsedLatitude, longitude: parsedLongitude, distanceKm: Number(distanceKm) || 0, etaMinutes: Number(etaMinutes) || 0 });
       } catch (error) {
         console.error('Location Update Socket Error:', error);
       }

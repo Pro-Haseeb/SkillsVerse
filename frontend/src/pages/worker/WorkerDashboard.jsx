@@ -9,8 +9,8 @@ import StatusBadge from '../../components/shared/StatusBadge';
 import EmptyState from '../../components/shared/EmptyState';
 import Pagination from '../../components/shared/Pagination';
 import { TableSkeleton } from '../../components/shared/LoadingSkeleton';
-import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
-import L from 'leaflet';
+import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import LiveTrackingMap from '../../components/shared/LiveTrackingMap';
 
 export default function WorkerDashboard({ user }) {
   const socketRef = useRef(null);
@@ -42,22 +42,9 @@ export default function WorkerDashboard({ user }) {
 
   // Simulated GPS state
   const [gpsLocation, setGpsLocation] = useState({ latitude: 24.8607, longitude: 67.0011 });
+  const [trackingDistance, setTrackingDistance] = useState(null);
+  const [trackingEta, setTrackingEta] = useState(null);
   const [isSimulatingGps, setIsSimulatingGps] = useState(false);
-
-  // Map icons
-  const workerIcon = L.divIcon({
-    className: 'custom-marker',
-    html: `<div style="background: linear-gradient(135deg, #10b981, #059669); width: 32px; height: 32px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>`,
-    iconSize: [32, 32],
-    iconAnchor: [16, 16]
-  });
-
-  const customerIcon = L.divIcon({
-    className: 'custom-marker',
-    html: `<div style="background: linear-gradient(135deg, #ff6b00, #e05e00); width: 32px; height: 32px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></div>`,
-    iconSize: [32, 32],
-    iconAnchor: [16, 16]
-  });
 
   // Chat state
   const [messages, setMessages] = useState([]);
@@ -76,6 +63,13 @@ export default function WorkerDashboard({ user }) {
     experienceYears: '',
     portfolioUrl: ''
   });
+  const isContractorUser = Boolean(
+    (Array.isArray(profile?.skills) && profile.skills.includes('Contractor')) ||
+    profile?.isContractor ||
+    profile?.contractorProfile?.status === 'pending' ||
+    profile?.contractorProfile?.status === 'approved' ||
+    profile?.contractorProfile?.status === 'rejected'
+  );
   const [constructorLoading, setConstructorLoading] = useState(false);
   const [constructorError, setConstructorError] = useState('');
   const [constructorSuccess, setConstructorSuccess] = useState('');
@@ -192,6 +186,26 @@ export default function WorkerDashboard({ user }) {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  const updateTrackingStats = (coords) => {
+    if (!activeJob?.location?.latitude || !activeJob?.location?.longitude || !coords?.latitude || !coords?.longitude) {
+      return;
+    }
+
+    const toLat = Number(activeJob.location.latitude);
+    const toLon = Number(activeJob.location.longitude);
+    const fromLat = Number(coords.latitude);
+    const fromLon = Number(coords.longitude);
+    const R = 6371;
+    const dLat = (toLat - fromLat) * Math.PI / 180;
+    const dLon = (toLon - fromLon) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(fromLat * Math.PI / 180) * Math.cos(toLat * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const distance = R * c;
+
+    setTrackingDistance(distance);
+    setTrackingEta(Math.max(1, Math.round(distance * 5)));
+  };
 
   // Continuous GPS updates
   const startWatchingLocation = () => {
@@ -496,6 +510,14 @@ export default function WorkerDashboard({ user }) {
 
     socket.emit('register', worker._id);
 
+    socket.on('connect_error', () => {
+      toast.error('Connection lost. Reconnecting to tracking service...');
+    });
+
+    socket.on('disconnect', () => {
+      toast.info('Tracking connection disconnected. Reconnect when network is available.');
+    });
+
     // Listen for incoming match requests
     socket.on('incoming_job_request', (offer) => {
       setIncomingJob(offer);
@@ -691,6 +713,7 @@ export default function WorkerDashboard({ user }) {
       currLon += stepLon;
 
       setGpsLocation({ latitude: currLat, longitude: currLon });
+      updateTrackingStats({ latitude: currLat, longitude: currLon });
 
       // Emit coordinates over socket
       if (socketRef.current) {
@@ -782,6 +805,8 @@ export default function WorkerDashboard({ user }) {
     overview: { title: 'Overview', subtitle: 'Your earnings, profile, and performance at a glance.' },
     'active-job': { title: 'Active Job', subtitle: 'Navigate to the customer, chat, and update job status.' },
     'construction': { title: 'Construction Projects', subtitle: 'Review assigned construction projects and locations.' },
+    'contractor-offers': { title: 'Contractor Offers', subtitle: 'Review contractor-specific service opportunities and profile status.' },
+    'contractor-projects': { title: 'Contractor Projects', subtitle: 'Track your active contractor assignments and project progress.' },
     'constructor-verification': { title: 'Constructor Verification', subtitle: 'Request and monitor constructor verification status.' },
     history: { title: 'Service History', subtitle: 'Review past jobs and payment records.' },
   }[activeTab];
@@ -936,6 +961,30 @@ export default function WorkerDashboard({ user }) {
                 ))}
               </div>
             </div>
+
+            {isContractorUser && (
+              <div style={{ marginTop: '20px' }}>
+                <span className="form-label">Contractor Profile</span>
+                <div className="worker-profile-grid" style={{ marginTop: '10px' }}>
+                  <div>
+                    <span className="form-label">Company</span>
+                    <p className="worker-profile-value">{profile.contractorProfile?.companyName || 'Not provided'}</p>
+                  </div>
+                  <div>
+                    <span className="form-label">Specialization</span>
+                    <p className="worker-profile-value">{profile.contractorProfile?.specialization || 'Not provided'}</p>
+                  </div>
+                  <div>
+                    <span className="form-label">Service Area</span>
+                    <p className="worker-profile-value">{profile.contractorProfile?.serviceArea || 'Not provided'}</p>
+                  </div>
+                  <div>
+                    <span className="form-label">Status</span>
+                    <p className="worker-profile-value">{profile.contractorProfile?.status === 'approved' ? 'Approved' : profile.contractorProfile?.status === 'pending' ? 'Pending review' : profile.contractorProfile?.status === 'rejected' ? 'Rejected' : 'Not submitted'}</p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </>
       )}
@@ -949,50 +998,19 @@ export default function WorkerDashboard({ user }) {
                   <h3 style={{ fontSize: '18px', color: 'var(--primary-orange)', marginBottom: '16px' }}>Live Navigation Map</h3>
 
                   {/* Real-time Map */}
-                  <div style={{ height: '380px', width: '100%', borderRadius: '20px', overflow: 'hidden', border: '1px solid var(--border-grey)', position: 'relative', marginBottom: '20px' }}>
-                    <MapContainer 
-                      center={[gpsLocation.latitude, gpsLocation.longitude]} 
-                      zoom={14} 
-                      style={{ height: '100%', width: '100%' }}
-                    >
-                      <TileLayer
-                        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                      />
-                      
-                      {/* Worker Marker (Green, updates in real time) */}
-                      <Marker position={[gpsLocation.latitude, gpsLocation.longitude]} icon={workerIcon}>
-                        <Popup>
-                          <strong>Your Location</strong> <br />
-                          {isSimulatingGps ? 'Simulating movement...' : 'Live GPS tracking'}
-                        </Popup>
-                      </Marker>
-
-                      {/* Customer Destination Marker (Orange) */}
-                      {activeJob.location?.latitude && activeJob.location?.longitude && (
-                        <>
-                          <Marker position={[activeJob.location.latitude, activeJob.location.longitude]} icon={customerIcon}>
-                            <Popup>
-                              <strong>Customer Destination</strong> <br />
-                              {activeJob.location.address}
-                            </Popup>
-                          </Marker>
-                          
-                          {/* Route line between worker and customer */}
-                          <Polyline 
-                            positions={[
-                              [gpsLocation.latitude, gpsLocation.longitude],
-                              [activeJob.location.latitude, activeJob.location.longitude]
-                            ]}
-                            color="#ff6b00"
-                            weight={4}
-                            opacity={0.7}
-                            dashArray="10, 10"
-                          />
-                        </>
-                      )}
-                    </MapContainer>
-                  </div>
+                  <LiveTrackingMap
+                    role="worker"
+                    customerLocation={activeJob.location}
+                    workerLocation={gpsLocation}
+                    onRouteInfo={({ distanceKm, etaMinutes }) => {
+                      if (distanceKm !== null && etaMinutes !== null) {
+                        setTrackingDistance(distanceKm);
+                        setTrackingEta(etaMinutes);
+                      }
+                    }}
+                    height="380px"
+                    initialCenter={[gpsLocation.latitude, gpsLocation.longitude]}
+                  />
 
                   <div style={{ background: 'var(--bg-input)', padding: '16px', borderRadius: '12px', border: '1px solid var(--border-grey)', marginBottom: '20px' }}>
                     <span className="form-label" style={{ fontSize: '10px' }}>Customer Address</span>
@@ -1000,6 +1018,17 @@ export default function WorkerDashboard({ user }) {
 
                     <span className="form-label" style={{ fontSize: '10px' }}>Service Category</span>
                     <p style={{ fontSize: '13px', fontWeight: '600' }}>{activeJob.category}</p>
+
+                    <div style={{ display: 'flex', gap: '12px', marginTop: '12px', flexWrap: 'wrap' }}>
+                      <div style={{ background: 'rgba(255,107,0,0.12)', border: '1px solid rgba(255,107,0,0.2)', borderRadius: '10px', padding: '8px 10px' }}>
+                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Distance</div>
+                        <div style={{ fontSize: '14px', fontWeight: '700', color: '#fff' }}>{trackingDistance !== null ? `${trackingDistance.toFixed(1)} km` : '--'}</div>
+                      </div>
+                      <div style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: '10px', padding: '8px 10px' }}>
+                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>ETA</div>
+                        <div style={{ fontSize: '14px', fontWeight: '700', color: '#fff' }}>{trackingEta !== null ? `${trackingEta} min` : '--'}</div>
+                      </div>
+                    </div>
                   </div>
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -1162,6 +1191,65 @@ export default function WorkerDashboard({ user }) {
             />
           )}
         </>
+      )}
+
+      {activeTab === 'contractor-offers' && (
+        <div className="card card--padded">
+          <div className="section-header">
+            <Briefcase size={20} color="var(--primary-orange)" />
+            <div className="section-header__text">
+              <h3>Contractor Offers</h3>
+              <p>Contractor opportunities and profile review updates appear here.</p>
+            </div>
+          </div>
+          <div className="worker-profile-grid">
+            <div>
+              <span className="form-label">Current contractor status</span>
+              <p className="worker-profile-value">{profile.contractorProfile?.status === 'approved' ? 'Approved for contractor projects' : profile.contractorProfile?.status === 'pending' ? 'Pending admin review' : profile.contractorProfile?.status === 'rejected' ? 'Rejected by admin' : 'Profile not submitted'}</p>
+            </div>
+            <div>
+              <span className="form-label">Service area</span>
+              <p className="worker-profile-value">{profile.contractorProfile?.serviceArea || 'Not provided yet'}</p>
+            </div>
+            <div>
+              <span className="form-label">Available opportunities</span>
+              <p className="worker-profile-value">{constructionProjects.length > 0 ? `${constructionProjects.length} project${constructionProjects.length > 1 ? 's' : ''} available` : 'No contractor offers yet'}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'contractor-projects' && (
+        <div className="card card--padded">
+          <div className="section-header">
+            <Hammer size={20} color="var(--primary-orange)" />
+            <div className="section-header__text">
+              <h3>Contractor Projects</h3>
+              <p>Track your assigned contractor projects and their progress.</p>
+            </div>
+          </div>
+
+          {constructionProjects.length === 0 ? (
+            <EmptyState
+              icon={Hammer}
+              title="No contractor projects yet"
+              description="Projects assigned by admin will appear here for tracking."
+            />
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {constructionProjects.map((project) => (
+                <div key={project._id} className="card" style={{ border: '1px solid var(--border-grey)', padding: '16px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', marginBottom: '8px' }}>
+                    <h4 style={{ fontSize: '16px', color: '#fff' }}>{project.category}</h4>
+                    <StatusBadge status={project.status} />
+                  </div>
+                  <p style={{ color: 'var(--text-secondary)', marginBottom: '8px' }}>{project.description || 'No description provided.'}</p>
+                  <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{project.location?.address || 'Location pending'}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
       {activeTab === 'construction' && (

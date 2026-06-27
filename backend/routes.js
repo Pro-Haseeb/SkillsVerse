@@ -49,7 +49,7 @@ const authenticateToken = (req, res, next) => {
 // Register User (Customer / Admin) or Worker
 router.post('/auth/register', async (req, res) => {
   try {
-    const { name, email, password, phone, role, skills } = req.body;
+    const { name, email, password, phone, role, skills, contractorDetails } = req.body;
 
     console.log('Registration request - Role:', role, 'Skills:', skills, 'Email:', email);
 
@@ -63,12 +63,26 @@ router.post('/auth/register', async (req, res) => {
       const existingWorker = await Worker.findOne({ email });
       if (existingWorker) return res.status(400).json({ error: 'Email already registered as Worker' });
 
+      const isContractor = Array.isArray(skills) && skills.includes('Contractor');
       const newWorker = new Worker({
         name,
         email,
         password: hashedPassword,
         phone,
         skills: skills || [],
+        contractorProfile: isContractor ? {
+          companyName: contractorDetails?.companyName || '',
+          experienceYears: Number(contractorDetails?.experienceYears || 0),
+          specialization: contractorDetails?.specialization || '',
+          serviceArea: contractorDetails?.serviceArea || '',
+          status: 'pending'
+        } : {
+          companyName: '',
+          experienceYears: 0,
+          specialization: '',
+          serviceArea: '',
+          status: 'none'
+        },
         status: 'pending' // Admin approval required
       });
 
@@ -139,6 +153,7 @@ router.post('/auth/login', async (req, res) => {
 
       const token = jwt.sign({ id: worker._id, role: 'worker', status: worker.status }, JWT_SECRET, { expiresIn: '24h' });
       console.log('Login successful for:', worker.name, 'isConstructor:', worker.isConstructor);
+      const isContractor = Array.isArray(worker.skills) && worker.skills.includes('Contractor');
       return res.json({
         token,
         user: {
@@ -150,7 +165,9 @@ router.post('/auth/login', async (req, res) => {
           status: worker.status,
           isAvailable: worker.isAvailable,
           isConstructor: worker.isConstructor || false,
-          skills: worker.skills
+          isContractor,
+          skills: worker.skills,
+          contractorProfile: worker.contractorProfile || {}
         }
       });
     } else {
@@ -193,7 +210,7 @@ router.get('/auth/profile', authenticateToken, async (req, res) => {
     if (req.user.role === 'worker') {
       const worker = await Worker.findById(req.user.id).select('-password');
       if (!worker) return res.status(404).json({ error: 'Worker not found' });
-      return res.json({ user: { ...worker.toObject(), role: 'worker' } });
+      return res.json({ user: { ...worker.toObject(), role: 'worker', isContractor: Array.isArray(worker.skills) && worker.skills.includes('Contractor') } });
     } else {
       const user = await User.findById(req.user.id).select('-password');
       if (!user) return res.status(444).json({ error: 'User not found' });
@@ -305,6 +322,29 @@ router.put('/admin/workers/:id/approve', authenticateToken, async (req, res) => 
     if (!worker) return res.status(404).json({ error: 'Worker not found' });
 
     res.json({ message: `Worker ${status} successfully`, worker });
+  } catch (error) {
+    res.status(500).json({ error: 'Operation failed' });
+  }
+});
+
+// Approve or reject contractor profile request
+router.put('/admin/workers/:id/contractor-approval', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+    const { contractorStatus } = req.body;
+
+    if (!['approved', 'rejected'].includes(contractorStatus)) {
+      return res.status(400).json({ error: 'Invalid contractorStatus value' });
+    }
+
+    const worker = await Worker.findByIdAndUpdate(
+      req.params.id,
+      { $set: { 'contractorProfile.status': contractorStatus } },
+      { new: true }
+    ).select('-password');
+
+    if (!worker) return res.status(404).json({ error: 'Worker not found' });
+    res.json({ message: `Contractor profile ${contractorStatus} successfully`, worker });
   } catch (error) {
     res.status(500).json({ error: 'Operation failed' });
   }
@@ -497,6 +537,12 @@ router.post('/jobs', authenticateToken, async (req, res) => {
         longitude: Number(location.longitude),
         address: location.address
       },
+      tracking: {
+        active: false,
+        lastUpdatedAt: null,
+        distanceKm: 0,
+        etaMinutes: 0
+      },
       payment: {
         amount: paymentAmount || (type === 'daily' ? 1500 : 0), // Mock amount in PKR
         status: 'pending'
@@ -645,7 +691,7 @@ router.put('/jobs/:id/worker-response', authenticateToken, async (req, res) => {
 // Update Job Status — worker: en_route only; customer: completed only
 router.put('/jobs/:id/status', authenticateToken, async (req, res) => {
   try {
-    const { status } = req.body;
+    const { status, tracking } = req.body;
     const job = await Job.findById(req.params.id);
     if (!job) return res.status(404).json({ error: 'Job not found' });
 
@@ -674,6 +720,13 @@ router.put('/jobs/:id/status', authenticateToken, async (req, res) => {
     }
 
     job.status = status;
+    if (tracking) {
+      job.tracking = {
+        ...job.tracking.toObject?.() || job.tracking,
+        ...tracking,
+        lastUpdatedAt: new Date()
+      };
+    }
     await job.save();
 
     if (status === 'completed' && job.worker) {
