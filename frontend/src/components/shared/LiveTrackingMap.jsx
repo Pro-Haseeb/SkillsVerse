@@ -49,6 +49,25 @@ export default function LiveTrackingMap({
   initialCenter = [24.8607, 67.0011],
   compact = false
 }) {
+  const normalizePosition = (location) => {
+    if (!location || typeof location !== 'object') return null;
+
+    const lat = location.latitude ?? location.lat ?? location.latitute ?? location?.coordinates?.[1] ?? location?.location?.latitude ?? location?.location?.lat;
+    const lng = location.longitude ?? location.lng ?? location.lon ?? location?.coordinates?.[0] ?? location?.location?.longitude ?? location?.location?.lng;
+
+    if (lat === undefined || lng === undefined || lat === null || lng === null) {
+      return null;
+    }
+
+    const parsedLat = Number(lat);
+    const parsedLng = Number(lng);
+
+    if (Number.isNaN(parsedLat) || Number.isNaN(parsedLng)) {
+      return null;
+    }
+
+    return [parsedLat, parsedLng];
+  };
   const workerIcon = useMemo(() => L.divIcon({
     className: 'custom-marker',
     html: `<div style="background: linear-gradient(135deg, #10b981, #059669); width: 32px; height: 32px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>`,
@@ -63,22 +82,36 @@ export default function LiveTrackingMap({
     iconAnchor: [16, 16]
   }), []);
 
+  const workerPosition = useMemo(() => normalizePosition(workerLocation), [workerLocation]);
+  const customerPosition = useMemo(() => normalizePosition(customerLocation), [customerLocation]);
+
   const mapCenter = useMemo(() => {
-    if (workerLocation && customerLocation) {
+    if (workerPosition && customerPosition) {
       return [
-        (Number(workerLocation.latitude) + Number(customerLocation.latitude)) / 2,
-        (Number(workerLocation.longitude) + Number(customerLocation.longitude)) / 2
+        (workerPosition[0] + customerPosition[0]) / 2,
+        (workerPosition[1] + customerPosition[1]) / 2
       ];
     }
+    if (workerPosition) return workerPosition;
+    if (customerPosition) return customerPosition;
     return initialCenter;
-  }, [workerLocation?.latitude, workerLocation?.longitude, customerLocation?.latitude, customerLocation?.longitude, initialCenter]);
+  }, [workerPosition, customerPosition, initialCenter]);
 
-  const workerPosition = workerLocation ? [Number(workerLocation.latitude), Number(workerLocation.longitude)] : null;
-  const customerPosition = customerLocation ? [Number(customerLocation.latitude), Number(customerLocation.longitude)] : null;
+  const mapBounds = useMemo(() => {
+    if (workerPosition && customerPosition) {
+      return L.latLngBounds(workerPosition, customerPosition);
+    }
+    return null;
+  }, [workerPosition, customerPosition]);
 
   return (
     <div style={{ height, width: '100%', borderRadius: '20px', overflow: 'hidden', border: '1px solid var(--border-grey)', position: 'relative' }}>
-      <MapContainer center={mapCenter} zoom={13} style={{ height: '100%', width: '100%' }}>
+      <MapContainer
+        center={mapCenter}
+        bounds={mapBounds || undefined}
+        zoom={13}
+        style={{ height: '100%', width: '100%' }}
+      >
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"

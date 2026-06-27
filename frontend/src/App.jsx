@@ -5,10 +5,12 @@ import { ToastProvider } from './context/ToastContext';
 import { ConfirmProvider } from './context/ConfirmContext';
 import Home from './pages/public/Home';
 import Auth from './pages/public/Auth';
+import About from './pages/public/About';
 import AdminAuth from './pages/public/AdminAuth';
 import CustomerDashboard from './pages/candidate/CandidateDashboard';
 import WorkerDashboard from './pages/worker/WorkerDashboard';
 import AdminDashboard from './pages/admin/AdminDashboard';
+import Footer from './components/shared/Footer';
 
 export const API_URL = import.meta.env.VITE_API_URL || 'https://skillsverse-8x82.onrender.com';
 
@@ -39,6 +41,7 @@ function Navigation({ user, logout }) {
 
       <nav className={`nav-links ${mobileMenuOpen ? 'nav-links--open' : ''}`}>
         <Link to="/" className="nav-link" onClick={() => setMobileMenuOpen(false)}>Home</Link>
+        <Link to="/about" className="nav-link" onClick={() => setMobileMenuOpen(false)}>About</Link>
         {user ? (
           <>
             {user.role === 'customer' && (
@@ -126,6 +129,7 @@ function App() {
             <main className="app-main">
               <Routes>
                 <Route path="/" element={<Home user={user} />} />
+                <Route path="/about" element={<About />} />
                 <Route path="/auth" element={<Auth login={login} />} />
                 <Route path="/admin/login" element={<AdminAuth login={login} />} />
                 <Route path="/customer" element={<CustomerDashboard user={user} />} />
@@ -134,6 +138,7 @@ function App() {
                 <Route path="/admin" element={<AdminDashboard user={user} />} />
               </Routes>
             </main>
+            <Footer />
           </div>
         </Router>
       </ConfirmProvider>
