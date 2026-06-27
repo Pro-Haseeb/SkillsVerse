@@ -187,6 +187,22 @@ export default function WorkerDashboard({ user }) {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  const getDistanceKm = (fromLat, fromLon, toLat, toLon) => {
+    if ([fromLat, fromLon, toLat, toLon].some((value) => value === undefined || value === null || Number.isNaN(Number(value)))) {
+      return 0;
+    }
+
+    const toRad = (value) => (Number(value) * Math.PI) / 180;
+    const R = 6371;
+    const dLat = toRad(toLat - fromLat);
+    const dLon = toRad(toLon - fromLon);
+    const lat1 = toRad(fromLat);
+    const lat2 = toRad(toLat);
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  };
+
   const updateTrackingStats = (coords) => {
     if (!activeJob?.location?.latitude || !activeJob?.location?.longitude || !coords?.latitude || !coords?.longitude) {
       return;
@@ -196,12 +212,7 @@ export default function WorkerDashboard({ user }) {
     const toLon = Number(activeJob.location.longitude);
     const fromLat = Number(coords.latitude);
     const fromLon = Number(coords.longitude);
-    const R = 6371;
-    const dLat = (toLat - fromLat) * Math.PI / 180;
-    const dLon = (toLon - fromLon) * Math.PI / 180;
-    const a = Math.sin(dLat / 2) ** 2 + Math.cos(fromLat * Math.PI / 180) * Math.cos(toLat * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    const distance = R * c;
+    const distance = getDistanceKm(fromLat, fromLon, toLat, toLon);
 
     setTrackingDistance(distance);
     setTrackingEta(Math.max(1, Math.round(distance * 5)));
@@ -217,7 +228,9 @@ export default function WorkerDashboard({ user }) {
         (position) => {
           const lat = position.coords.latitude;
           const lon = position.coords.longitude;
-          setGpsLocation({ latitude: lat, longitude: lon });
+          const nextCoords = { latitude: lat, longitude: lon };
+          setGpsLocation(nextCoords);
+          updateTrackingStats(nextCoords);
           updateBackendLocation(lat, lon);
 
           // Emit coordinate update over socket if there's an active job
@@ -368,7 +381,9 @@ export default function WorkerDashboard({ user }) {
         (position) => {
           const lat = position.coords.latitude;
           const lon = position.coords.longitude;
-          setGpsLocation({ latitude: lat, longitude: lon });
+          const nextCoords = { latitude: lat, longitude: lon };
+          setGpsLocation(nextCoords);
+          updateTrackingStats(nextCoords);
           updateBackendLocation(lat, lon);
         },
         (error) => {
@@ -701,21 +716,41 @@ export default function WorkerDashboard({ user }) {
     const customerLon = activeJob.location.longitude;
 
     // Start with current worker coordinates or Karachi center
-    let currLat = gpsLocation.latitude;
-    let currLon = gpsLocation.longitude;
+    let currLat = Number(gpsLocation.latitude);
+    let currLon = Number(gpsLocation.longitude);
 
     simulationIntervalRef.current = setInterval(() => {
-      // Step delta coordinates: move 10% closer to customer coordinates every second
-      const stepLat = (customerLat - currLat) * 0.12;
-      const stepLon = (customerLon - currLon) * 0.12;
+      const currentDistanceKm = getDistanceKm(currLat, currLon, customerLat, customerLon);
+      const stepDistanceKm = Math.max(0.08, Math.min(0.4, currentDistanceKm / 6));
 
-      currLat += stepLat;
-      currLon += stepLon;
+      const toRad = (value) => (Number(value) * Math.PI) / 180;
+      const fromRad = (value) => (Number(value) * 180) / Math.PI;
 
-      setGpsLocation({ latitude: currLat, longitude: currLon });
-      updateTrackingStats({ latitude: currLat, longitude: currLon });
+      const lat1 = toRad(currLat);
+      const lon1 = toRad(currLon);
+      const lat2 = toRad(customerLat);
+      const lon2 = toRad(customerLon);
+      const dLon = lon2 - lon1;
+      const y = Math.sin(dLon) * Math.cos(lat2);
+      const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+      const bearing = Math.atan2(y, x);
+      const delta = stepDistanceKm / 6371;
 
-      // Emit coordinates over socket
+      const nextLat = Math.asin(
+        Math.sin(lat1) * Math.cos(delta) + Math.cos(lat1) * Math.sin(delta) * Math.cos(bearing)
+      );
+      const nextLon = lon1 + Math.atan2(
+        Math.sin(bearing) * Math.sin(delta) * Math.cos(lat1),
+        Math.cos(delta) - Math.sin(lat1) * Math.sin(nextLat)
+      );
+
+      currLat = fromRad(nextLat);
+      currLon = fromRad(nextLon);
+
+      const nextCoords = { latitude: currLat, longitude: currLon };
+      setGpsLocation(nextCoords);
+      updateTrackingStats(nextCoords);
+
       if (socketRef.current) {
         socketRef.current.emit('update_worker_location', {
           jobId: activeJob._id,
@@ -725,12 +760,10 @@ export default function WorkerDashboard({ user }) {
         });
       }
 
-      // Check distance. If close enough, stop simulation and update status
-      const dist = Math.abs(customerLat - currLat) + Math.abs(customerLon - currLon);
-      if (dist < 0.0002) {
+      if (getDistanceKm(currLat, currLon, customerLat, customerLon) < 0.08) {
         stopGpsSimulation();
-        handleUpdateStatus('en_route'); // "Arrived" state
-        toast.info("Simulated tracking: You have arrived at the customer's address.");
+        handleUpdateStatus('en_route');
+        toast.info('Simulated tracking: You have arrived at the customer\'s address.');
       }
     }, 1000);
   };
