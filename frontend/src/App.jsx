@@ -12,7 +12,13 @@ import WorkerDashboard from './pages/worker/WorkerDashboard';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import Footer from './components/shared/Footer';
 
-export const API_URL = import.meta.env.VITE_API_URL || (typeof window !== 'undefined' ? window.location.origin : '');
+const getApiBaseUrl = () => {
+  const configuredUrl = (import.meta.env.VITE_API_URL || '').trim();
+  if (!configuredUrl) return '';
+  return configuredUrl.replace(/\/$/, '');
+};
+
+export const API_URL = getApiBaseUrl();
 
 function Navigation({ user, logout }) {
   const navigate = useNavigate();
