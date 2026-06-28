@@ -1,12 +1,4 @@
-import { HardHat, LayoutDashboard, Briefcase, Clock, User, Hammer, Building2 } from 'lucide-react';
-
-const WORKER_TABS = [
-  { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-  { id: 'active-job', label: 'Active Job', icon: Briefcase },
-  { id: 'construction', label: 'Construction', icon: Hammer },
-  { id: 'constructor-verification', label: 'Constructor Status', icon: Building2 },
-  { id: 'history', label: 'Service History', icon: Clock },
-];
+import { HardHat, LayoutDashboard, Briefcase, Clock, User, Hammer } from 'lucide-react';
 
 export default function WorkerSidebar({
   activeTab,
@@ -28,12 +20,17 @@ export default function WorkerSidebar({
 
   const visibleTabs = isContractorUser
     ? [
-        ...WORKER_TABS.slice(0, 3),
+        { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+        { id: 'active-job', label: 'Active Job', icon: Briefcase },
+        { id: 'construction', label: 'Contractor Projects', icon: Hammer },
         { id: 'contractor-offers', label: 'Contractor Offers', icon: Briefcase },
-        { id: 'contractor-projects', label: 'Contractor Projects', icon: Hammer },
-        ...WORKER_TABS.slice(3),
+        { id: 'history', label: 'Service History', icon: Clock },
       ]
-    : WORKER_TABS;
+    : [
+        { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+        { id: 'active-job', label: 'Active Job', icon: Briefcase },
+        { id: 'history', label: 'Service History', icon: Clock },
+      ];
 
   return (
     <aside className="dashboard-sidebar">

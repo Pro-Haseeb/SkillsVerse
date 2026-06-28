@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
-import { User, HardHat, Mail, Lock, Phone, Wrench, MapPin, CreditCard, ArrowLeft, Building2 } from 'lucide-react';
+import { User, HardHat, Mail, Lock, Phone, Wrench, MapPin, CreditCard, ArrowLeft } from 'lucide-react';
 import { API_URL } from '../../App';
 
 const SKILLS_LIST = [
@@ -46,14 +46,6 @@ export default function Auth({ login }) {
   const [password, setPassword] = useState('');
   const [phone, setPhone] = useState('');
   const [selectedSkills, setSelectedSkills] = useState([]);
-  const [contractorDetails, setContractorDetails] = useState({
-    companyName: '',
-    experienceYears: '',
-    specialization: '',
-    serviceArea: ''
-  });
-
-  const isContractorRegistration = !isLogin && role === 'worker' && selectedSkills.includes('Contractor');
 
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -65,10 +57,6 @@ export default function Auth({ login }) {
     setSelectedSkills((prev) =>
       prev.includes(skill) ? prev.filter((s) => s !== skill) : [...prev, skill]
     );
-  };
-
-  const handleContractorFieldChange = (field, value) => {
-    setContractorDetails((prev) => ({ ...prev, [field]: value }));
   };
 
   const switchMode = (loginMode) => {
@@ -93,7 +81,6 @@ export default function Auth({ login }) {
           phone,
           role,
           skills: role === 'worker' ? selectedSkills : [],
-          contractorDetails: isContractorRegistration ? contractorDetails : undefined,
         };
 
     console.log('Current mode:', isLogin ? 'LOGIN' : 'REGISTER');
@@ -125,7 +112,6 @@ export default function Auth({ login }) {
         setPhone('');
         setPassword('');
         setSelectedSkills([]);
-        setContractorDetails({ companyName: '', experienceYears: '', specialization: '', serviceArea: '' });
       }
     } catch (err) {
       setError(err.message);
@@ -343,66 +329,13 @@ export default function Auth({ login }) {
                 {selectedSkills.length === 0 && (
                   <p className="auth-field-hint">Select at least one skill to receive job requests.</p>
                 )}
-
-                {isContractorRegistration && (
-                  <div style={{ marginTop: '14px', display: 'grid', gap: '12px' }}>
-                    <div className="auth-skills-header">
-                      <label className="form-label">Contractor profile</label>
-                      <span className="auth-skills-count">Required for contractor services</span>
-                    </div>
-                    <div className="input-with-icon">
-                      <Building2 size={16} className="input-icon" />
-                      <input
-                        type="text"
-                        placeholder="Company or business name"
-                        value={contractorDetails.companyName}
-                        onChange={(e) => handleContractorFieldChange('companyName', e.target.value)}
-                        className="form-input"
-                        required
-                      />
-                    </div>
-                    <div className="input-with-icon">
-                      <Wrench size={16} className="input-icon" />
-                      <input
-                        type="text"
-                        placeholder="Specialization (e.g. Renovation, Fit-out)"
-                        value={contractorDetails.specialization}
-                        onChange={(e) => handleContractorFieldChange('specialization', e.target.value)}
-                        className="form-input"
-                        required
-                      />
-                    </div>
-                    <div className="input-with-icon">
-                      <MapPin size={16} className="input-icon" />
-                      <input
-                        type="text"
-                        placeholder="Service area"
-                        value={contractorDetails.serviceArea}
-                        onChange={(e) => handleContractorFieldChange('serviceArea', e.target.value)}
-                        className="form-input"
-                        required
-                      />
-                    </div>
-                    <div className="input-with-icon">
-                      <Phone size={16} className="input-icon" />
-                      <input
-                        type="number"
-                        min="0"
-                        placeholder="Years of experience"
-                        value={contractorDetails.experienceYears}
-                        onChange={(e) => handleContractorFieldChange('experienceYears', e.target.value)}
-                        className="form-input"
-                      />
-                    </div>
-                  </div>
-                )}
               </div>
             )}
 
             <button
               type="submit"
               className="btn btn-primary auth-submit-btn"
-              disabled={loading || (!isLogin && role === 'worker' && selectedSkills.length === 0) || (!isLogin && role === 'worker' && selectedSkills.includes('Contractor') && (!contractorDetails.companyName.trim() || !contractorDetails.specialization.trim() || !contractorDetails.serviceArea.trim()))}
+              disabled={loading || (!isLogin && role === 'worker' && selectedSkills.length === 0)}
             >
               {loading ? 'Please wait…' : isLogin ? 'Sign in' : 'Create account'}
             </button>

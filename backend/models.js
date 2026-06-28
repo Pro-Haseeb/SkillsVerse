@@ -20,14 +20,6 @@ const WorkerSchema = new Schema({
   skills: [{ type: String }], // e.g. Plumbing, Electrical, Cleaning, Structural, Woodwork, etc.
   status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
   isAvailable: { type: Boolean, default: false },
-  isConstructor: { type: Boolean, default: false }, // Constructor flag for construction projects
-  constructorDetails: {
-    constructionDetails: { type: String, default: '' },
-    experienceYears: { type: Number, default: 0 },
-    portfolioUrl: { type: String, default: '' },
-    requestedAt: { type: Date, default: null },
-    status: { type: String, enum: ['none', 'pending', 'approved', 'rejected'], default: 'none' }
-  },
   contractorProfile: {
     companyName: { type: String, default: '' },
     experienceYears: { type: Number, default: 0 },
@@ -55,13 +47,20 @@ const JobSchema = new Schema({
   location: {
     latitude: { type: Number, required: true },
     longitude: { type: Number, required: true },
-    address: { type: String, required: true }
+    address: { type: String, required: true },
+    manualAddress: { type: String, default: '' }
   },
-  status: { 
-    type: String, 
-    enum: ['pending', 'pending_acceptance', 'assigned', 'en_route', 'completed', 'cancelled'], 
-    default: 'pending' 
+  status: {
+    type: String,
+    enum: ['pending', 'pending_acceptance', 'pending_admin_approval', 'assigned', 'en_route', 'completed', 'cancelled', 'contractor_offers_sent'],
+    default: 'pending'
   },
+  contractorOffers: [{
+    contractorId: { type: Schema.Types.ObjectId, ref: 'Worker' },
+    status: { type: String, enum: ['pending', 'accepted', 'rejected'], default: 'pending' },
+    sentAt: { type: Date, default: Date.now },
+    respondedAt: { type: Date, default: null }
+  }],
   tracking: {
     active: { type: Boolean, default: false },
     lastUpdatedAt: { type: Date, default: null },

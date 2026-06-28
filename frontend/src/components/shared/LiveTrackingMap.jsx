@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 
 function AnimatedMarker({ position, icon, popupTitle, popupBody }) {
@@ -104,11 +104,22 @@ export default function LiveTrackingMap({
     return null;
   }, [workerPosition, customerPosition]);
 
+  function MapViewSync() {
+    const map = useMap();
+    useEffect(() => {
+      if (mapBounds) {
+        map.fitBounds(mapBounds, { padding: [40, 40] });
+      } else if (mapCenter) {
+        map.setView(mapCenter, 13);
+      }
+    }, [map, mapBounds, mapCenter]);
+    return null;
+  }
+
   return (
     <div style={{ height, width: '100%', borderRadius: '20px', overflow: 'hidden', border: '1px solid var(--border-grey)', position: 'relative' }}>
       <MapContainer
         center={mapCenter}
-        bounds={mapBounds || undefined}
         zoom={13}
         style={{ height: '100%', width: '100%' }}
       >
@@ -116,6 +127,8 @@ export default function LiveTrackingMap({
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
+
+        <MapViewSync />
 
         {customerPosition && (
           <AnimatedMarker
@@ -136,6 +149,16 @@ export default function LiveTrackingMap({
         )}
 
       </MapContainer>
+      <div style={{ position: 'absolute', bottom: '12px', left: '12px', backgroundColor: 'rgba(8, 12, 18, 0.82)', color: '#fff', padding: '10px 12px', borderRadius: '12px', fontSize: '12px', border: '1px solid rgba(255,255,255,0.08)', zIndex: 1000, minWidth: '180px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+          <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#10b981', display: 'inline-block' }} />
+          <span>Worker location</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#ff6b00', display: 'inline-block' }} />
+          <span>Customer location</span>
+        </div>
+      </div>
     </div>
   );
 }

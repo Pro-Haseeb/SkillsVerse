@@ -1,5 +1,6 @@
 const VARIANT_MAP = {
   pending: 'badge-pending',
+  pending_admin_approval: 'badge-pending',
   assigned: 'badge-info',
   en_route: 'badge-info',
   completed: 'badge-success',
@@ -13,6 +14,7 @@ const VARIANT_MAP = {
   refunded: 'badge-error',
   under_review: 'badge-warning',
   searching: 'badge-pending',
+  contractor_offers_sent: 'badge-pending',
   accepted: 'badge-success',
   declined: 'badge-error',
   failed: 'badge-error',
@@ -24,6 +26,8 @@ const VARIANT_MAP = {
 const LABEL_MAP = {
   en_route: 'En Route',
   under_review: 'Under Review',
+  contractor_offers_sent: 'Offer Sent',
+  pending_admin_approval: 'Pending Admin Approval',
 };
 
 function normalizeStatus(status) {

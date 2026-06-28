@@ -16,6 +16,8 @@ export default function AdminDashboard({ user }) {
   const [workers, setWorkers] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [constructionJobs, setConstructionJobs] = useState([]);
+  const [contractorRequests, setContractorRequests] = useState([]);
+  const [contractorRequestsPage, setContractorRequestsPage] = useState(1);
   const [allJobs, setAllJobs] = useState([]);
   const [paymentsStats, setPaymentsStats] = useState({ totalEarnings: 0, pendingEarnings: 0, completedJobsCount: 0 });
   const [complaints, setComplaints] = useState([]);
@@ -34,6 +36,7 @@ export default function AdminDashboard({ user }) {
   // Assignment states
   const [selectedWorkers, setSelectedWorkers] = useState({}); // jobId -> workerId mapping
   const [customQuote, setCustomQuote] = useState({}); // jobId -> quote amount mapping
+  const [contractorCityFilter, setContractorCityFilter] = useState('');
 
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('overview');
@@ -62,7 +65,8 @@ export default function AdminDashboard({ user }) {
       const jData = await jRes.json();
       if (jRes.ok) {
         setAllJobs(jData);
-        setConstructionJobs(jData.filter(job => job.type === 'construction'));
+        setConstructionJobs(jData.filter(job => job.type === 'construction' && !['assigned', 'en_route', 'completed', 'pending_admin_approval'].includes(job.status)));
+        setContractorRequests(jData.filter(job => job.type === 'construction' && job.status === 'pending_admin_approval'));
       }
 
       // Load Payment Statistics
@@ -129,29 +133,6 @@ export default function AdminDashboard({ user }) {
     } catch (error) {
       console.error(error);
       toast.error('Failed to update contractor profile status.');
-    }
-  };
-
-  const handleConstructorApproval = async (workerId, constructorStatus) => {
-    try {
-      const response = await fetch(`${API_URL}/api/admin/workers/${workerId}/constructor-approval`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify({ constructorStatus })
-      });
-      if (response.ok) {
-        toast.success(`Constructor verification ${constructorStatus}.`);
-        loadAdminData();
-      } else {
-        const data = await response.json();
-        toast.error(data.error || 'Failed to update constructor request status.');
-      }
-    } catch (error) {
-      console.error(error);
-      toast.error('Failed to update constructor request status.');
     }
   };
 
@@ -277,6 +258,65 @@ export default function AdminDashboard({ user }) {
     }
   };
 
+  const handleJobAdminApproval = async (jobId, action) => {
+    try {
+      const response = await fetch(`${API_URL}/api/jobs/${jobId}/admin-approval`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({ action })
+      });
+      const data = await response.json();
+      if (response.ok) {
+        toast.success(data.message);
+        loadAdminData();
+      } else {
+        toast.error(data.error || 'Failed to update approval status.');
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to update approval status.');
+    }
+  };
+
+  const handleSendToAllContractors = async (jobId) => {
+    try {
+      const body = contractorCityFilter.trim() ? { city: contractorCityFilter.trim() } : {};
+      const response = await fetch(`${API_URL}/api/jobs/${jobId}/send-to-contractors`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify(body)
+      });
+
+      if (response.ok) {
+        const successMessage = contractorCityFilter.trim()
+          ? `Project sent to contractors in ${contractorCityFilter.trim()} successfully.`
+          : 'Project sent to all contractors successfully.';
+        toast.success(successMessage);
+        loadAdminData();
+      } else {
+        const contentType = response.headers.get('content-type') || '';
+        let data = { error: 'Failed to send to contractors.' };
+        if (contentType.includes('application/json')) {
+          data = await response.json();
+        } else {
+          const text = await response.text();
+          console.error('Non-JSON error response:', text);
+          data.error = text || data.error;
+        }
+        toast.error(data.error || 'Failed to send to contractors.');
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to send to contractors.');
+    }
+  };
+
   const handleResolveComplaint = async (complaintId, action) => {
     const data = resolveData[complaintId] || {};
     const confirmed = await confirm({
@@ -336,6 +376,7 @@ export default function AdminDashboard({ user }) {
   const visibleCustomers = getPaginatedItems(customers, customerPage);
   const visibleServiceHistory = getPaginatedItems(allJobs, serviceHistoryPage);
   const visibleConstructionJobs = getPaginatedItems(constructionJobs, constructionPage);
+  const visibleContractorRequests = getPaginatedItems(contractorRequests, contractorRequestsPage);
   const visibleEscrowJobs = getPaginatedItems(allJobs, escrowPage);
   const visibleComplaints = getPaginatedItems(complaints, complaintPage);
 
@@ -343,18 +384,26 @@ export default function AdminDashboard({ user }) {
   const customerTotalPages = getTotalPages(customers);
   const serviceHistoryTotalPages = getTotalPages(allJobs);
   const constructionTotalPages = getTotalPages(constructionJobs);
+  const contractorRequestsTotalPages = getTotalPages(contractorRequests);
   const escrowTotalPages = getTotalPages(allJobs);
   const complaintTotalPages = getTotalPages(complaints);
 
   // Dropdown helper to filter approved workers by matching category skills
   const getMatchingWorkers = (category) => {
-    // For construction jobs, only show workers who have Contractor skill
-    return workers.filter(w => 
-      w.status === 'approved' && 
-      !w.isBlocked && 
-      w.skills.includes('Contractor') &&
-      w.skills.includes(category)
-    );
+    const cityQuery = contractorCityFilter.trim().toLowerCase();
+    return workers.filter(w => {
+      const isApprovedContractor =
+        w.status === 'approved' &&
+        !w.isBlocked &&
+        w.skills.includes('Contractor') &&
+        w.skills.includes(category);
+
+      if (!isApprovedContractor) return false;
+      if (!cityQuery) return true;
+
+      const serviceArea = String(w.contractorProfile?.serviceArea || '').toLowerCase();
+      return serviceArea.includes(cityQuery);
+    });
   };
 
   const pageMeta = {
@@ -377,6 +426,10 @@ export default function AdminDashboard({ user }) {
     'construction-assignment': {
       title: 'Construction Projects',
       subtitle: 'Match construction requests with approved contractors and set quotes.',
+    },
+    'contractor-requests': {
+      title: 'Contractor Requests',
+      subtitle: 'Review contractor accepted construction projects pending your final approval.',
     },
     'escrow-ledger': {
       title: 'Escrow Ledger',
@@ -450,7 +503,7 @@ export default function AdminDashboard({ user }) {
                       <th style={{ padding: '12px' }}>Skills</th>
                       <th style={{ padding: '12px' }}>Role</th>
                       <th style={{ padding: '12px' }}>Approval Status</th>
-                      <th style={{ padding: '12px' }}>Constructor Request</th>
+                      <th style={{ padding: '12px' }}>Contractor Approval</th>
                       <th style={{ padding: '12px' }}>Account</th>
                       <th style={{ padding: '12px' }}>Requests Stats</th>
                       <th style={{ padding: '12px' }}>Actions</th>
@@ -470,8 +523,6 @@ export default function AdminDashboard({ user }) {
                         <td style={{ padding: '12px' }}>
                           {isContractorRole(w) ? (
                             <StatusBadge status="info" label="Contractor" />
-                          ) : w.isConstructor ? (
-                            <StatusBadge status="info" label="Constructor" />
                           ) : (
                             <StatusBadge status="info" label="Worker" />
                           )}
@@ -511,31 +562,8 @@ export default function AdminDashboard({ user }) {
                                 </div>
                               )}
                             </div>
-                          ) : w.constructorDetails?.status === 'pending' ? (
-                            <div style={{ display: 'grid', gap: '6px' }}>
-                              <StatusBadge status="pending" label="Pending Review" />
-                              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                                <button
-                                  onClick={() => handleConstructorApproval(w._id, 'approved')}
-                                  className="btn btn-primary"
-                                  style={{ padding: '6px 10px', fontSize: '11px', background: 'var(--success-color)' }}
-                                >
-                                  <Check size={12} /> Approve
-                                </button>
-                                <button
-                                  onClick={() => handleConstructorApproval(w._id, 'rejected')}
-                                  className="btn btn-danger"
-                                  style={{ padding: '6px 10px', fontSize: '11px' }}
-                                >
-                                  <X size={12} /> Reject
-                                </button>
-                              </div>
-                            </div>
                           ) : (
-                            <StatusBadge
-                              status={w.constructorDetails?.status === 'none' ? 'info' : w.constructorDetails?.status || 'info'}
-                              label={w.constructorDetails?.status === 'none' ? 'No Request' : undefined}
-                            />
+                            <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>—</span>
                           )}
                         </td>
                         <td style={{ padding: '12px' }}>
@@ -753,7 +781,10 @@ export default function AdminDashboard({ user }) {
                           {job.location?.address || '—'}
                         </td>
                         <td style={{ padding: '12px' }}>
-                          <StatusBadge status={job.status} />
+                          <StatusBadge
+                            status={job.status}
+                            label={job.type === 'construction' && job.status === 'assigned' ? 'Approved' : undefined}
+                          />
                         </td>
                         <td style={{ padding: '12px', fontWeight: '700' }}>
                           {job.payment?.amount ? `${job.payment.amount.toLocaleString()} PKR` : '—'}
@@ -800,6 +831,25 @@ export default function AdminDashboard({ user }) {
             />
           ) : (
             <>
+              <div style={{ marginBottom: '20px', display: 'flex', flexWrap: 'wrap', gap: '14px', alignItems: 'flex-end' }}>
+                <div style={{ flex: '1 1 320px' }}>
+                  <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    Filter contractors by city
+                  </label>
+                  <input
+                    type="text"
+                    value={contractorCityFilter}
+                    onChange={e => setContractorCityFilter(e.target.value)}
+                    placeholder="Enter city name, e.g. Karachi, Lahore"
+                    style={{ width: '100%', background: 'var(--bg-input)', border: '1px solid var(--border-grey)', borderRadius: '8px', padding: '10px 12px', color: '#f5f5f7', fontSize: '13px', fontFamily: 'inherit', boxSizing: 'border-box' }}
+                  />
+                </div>
+                <div style={{ minWidth: '200px', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                  {contractorCityFilter.trim()
+                    ? `Showing contractors with service area matching "${contractorCityFilter.trim()}"`
+                    : 'Showing all approved contractors for each project.'}
+                </div>
+              </div>
               <div className="data-table-wrap">
                 <table className="data-table">
                   <thead>
@@ -831,48 +881,54 @@ export default function AdminDashboard({ user }) {
                           <td style={{ padding: '12px', fontWeight: '700' }}>{job.payment.amount} PKR</td>
                           <td style={{ padding: '12px' }}>
                             {job.worker ? (
-                              <span style={{ color: 'var(--success-color)', fontWeight: '600' }}>{job.worker?.name || 'Worker'}</span>
+                              <>
+                                <span style={{ color: 'var(--success-color)', fontWeight: '600', display: 'block' }}>{job.worker?.name || 'Worker'}</span>
+                                <StatusBadge
+                                  status={job.status === 'assigned' ? 'accepted' : job.status}
+                                  label={job.status === 'assigned' ? 'Approved' : job.status === 'pending_acceptance' ? 'Pending Acceptance' : job.status === 'en_route' ? 'En Route' : job.status === 'completed' ? 'Completed' : 'Assigned'}
+                                />
+                              </>
                             ) : (
                               <span style={{ color: 'var(--warning-color)' }}>Awaiting Assignment</span>
                             )}
                           </td>
                           <td style={{ padding: '12px' }}>
-                            {!job.worker ? (
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxWidth: '200px' }}>
-                                
-                                {/* Contractor Select */}
-                                <select
-                                  value={selectedWorkers[job._id] || ''}
-                                  onChange={(e) => setSelectedWorkers({ ...selectedWorkers, [job._id]: e.target.value })}
-                                  className="form-input"
-                                  style={{ fontSize: '12px', padding: '6px' }}
-                                >
-                                  <option value="">-- Match Contractor --</option>
-                                  {matchingWorkers.map(w => (
-                                    <option key={w._id} value={w._id}>{w.name}</option>
-                                  ))}
-                                </select>
-
-                                {/* Custom budget override */}
-                                <input 
-                                  type="number" 
-                                  placeholder="Override Quote (PKR)"
-                                  value={customQuote[job._id] || ''}
-                                  onChange={(e) => setCustomQuote({ ...customQuote, [job._id]: e.target.value })}
-                                  className="form-input"
-                                  style={{ fontSize: '12px', padding: '6px' }}
-                                />
-
-                                <button 
-                                  onClick={() => handleAssignWorker(job._id)}
+                            {job.status === 'pending' && !job.worker ? (
+                              <>
+                                <button
+                                  onClick={() => handleSendToAllContractors(job._id)}
                                   className="btn btn-primary"
-                                  style={{ padding: '6px 12px', fontSize: '12px' }}
+                                  style={{ padding: '8px 16px', fontSize: '12px' }}
                                 >
-                                  Confirm Assignment
+                                  {contractorCityFilter.trim()
+                                    ? `Send To Contractors in ${contractorCityFilter.trim()}`
+                                    : 'Send To All Contractors'}
+                                </button>
+                                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '8px' }}>
+                                  {matchingWorkers.length > 0
+                                    ? `${matchingWorkers.length} contractor${matchingWorkers.length > 1 ? 's' : ''} match${contractorCityFilter.trim() ? ' this city' : ''}`
+                                    : `No matching contractors${contractorCityFilter.trim() ? ` for ${contractorCityFilter.trim()}` : ''}`}
+                                </div>
+                              </>
+                            ) : job.status === 'pending_admin_approval' ? (
+                              <div style={{ display: 'grid', gap: '8px' }}>
+                                <button
+                                  onClick={() => handleJobAdminApproval(job._id, 'approve')}
+                                  className="btn btn-primary"
+                                  style={{ padding: '8px 16px', fontSize: '12px' }}
+                                >
+                                  Approve Contractor
+                                </button>
+                                <button
+                                  onClick={() => handleJobAdminApproval(job._id, 'reject')}
+                                  className="btn btn-secondary"
+                                  style={{ padding: '8px 16px', fontSize: '12px', borderColor: 'var(--error-color)', color: 'var(--error-color)' }}
+                                >
+                                  Reject Contractor
                                 </button>
                               </div>
                             ) : (
-                              <StatusBadge status="assigned" label="Assigned & Locked" />
+                              <StatusBadge status={job.status === 'assigned' ? 'accepted' : job.status} label={job.status === 'assigned' ? 'Approved' : job.status === 'pending_acceptance' ? 'Awaiting approval' : job.status === 'contractor_offers_sent' ? 'Offers Sent' : job.status === 'pending_admin_approval' ? 'Pending Admin Approval' : job.status === 'en_route' ? 'Worker en route' : job.status === 'completed' ? 'Completed' : 'Assigned'} />
                             )}
                           </td>
                         </tr>
@@ -888,6 +944,91 @@ export default function AdminDashboard({ user }) {
                 pageSize={itemsPerPage}
                 onPageChange={setConstructionPage}
                 itemLabel="projects"
+              />
+            </>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'contractor-requests' && (
+        <div className="card card--padded">
+          <div className="section-header">
+            <Hammer size={20} color="var(--primary-orange)" />
+            <div className="section-header__text">
+              <h3>Contractor Requests</h3>
+              <p>Review contractor accepted requests and approve or reject the final assignment.</p>
+            </div>
+          </div>
+
+          {contractorRequests.length === 0 ? (
+            <EmptyState
+              icon={Hammer}
+              title="No contractor requests"
+              description="Contractor accepted requests awaiting admin approval will appear here."
+            />
+          ) : (
+            <>
+              <div className="data-table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border-grey)', color: 'var(--text-secondary)' }}>
+                      <th style={{ padding: '12px' }}>Project</th>
+                      <th style={{ padding: '12px' }}>Customer</th>
+                      <th style={{ padding: '12px' }}>Contractor</th>
+                      <th style={{ padding: '12px' }}>Budget</th>
+                      <th style={{ padding: '12px' }}>Status</th>
+                      <th style={{ padding: '12px' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleContractorRequests.map(job => (
+                      <tr key={job._id} style={{ borderBottom: '1px solid var(--border-grey)' }}>
+                        <td style={{ padding: '12px' }}>
+                          <div style={{ fontWeight: '700', color: '#fff' }}>{job.category}</div>
+                          <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }} title={job.description}>{job.description}</div>
+                        </td>
+                        <td style={{ padding: '12px' }}>
+                          <div style={{ fontWeight: '600' }}>{job.customer?.name || 'Customer'}</div>
+                          <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{job.customer?.phone || '—'}</div>
+                        </td>
+                        <td style={{ padding: '12px' }}>
+                          <div style={{ fontWeight: '600' }}>{job.worker?.name || 'Contractor'}</div>
+                          <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{job.worker?.phone || '—'}</div>
+                        </td>
+                        <td style={{ padding: '12px', fontWeight: '700' }}>{job.payment?.amount} PKR</td>
+                        <td style={{ padding: '12px' }}>
+                          <StatusBadge status={job.status} />
+                        </td>
+                        <td style={{ padding: '12px' }}>
+                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                            <button
+                              onClick={() => handleJobAdminApproval(job._id, 'approve')}
+                              className="btn btn-primary"
+                              style={{ padding: '8px 16px', fontSize: '12px' }}
+                            >
+                              Approve
+                            </button>
+                            <button
+                              onClick={() => handleJobAdminApproval(job._id, 'reject')}
+                              className="btn btn-secondary"
+                              style={{ padding: '8px 16px', fontSize: '12px', borderColor: 'var(--error-color)', color: 'var(--error-color)' }}
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <Pagination
+                page={contractorRequestsPage}
+                totalPages={contractorRequestsTotalPages}
+                totalItems={contractorRequests.length}
+                pageSize={itemsPerPage}
+                onPageChange={setContractorRequestsPage}
+                itemLabel="requests"
               />
             </>
           )}

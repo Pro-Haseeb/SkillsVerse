@@ -6,6 +6,7 @@ const ADMIN_MENU = [
   { id: 'customer-management', label: 'Customer Management', icon: UserCircle },
   { id: 'service-history', label: 'Service History', icon: ListChecks },
   { id: 'construction-assignment', label: 'Construction Projects', icon: Hammer },
+  { id: 'contractor-requests', label: 'Contractor Requests', icon: Hammer },
   { id: 'escrow-ledger', label: 'Escrow Ledger', icon: CreditCard },
   { id: 'complaints', label: 'Complaints', icon: ShieldAlert }
 ];

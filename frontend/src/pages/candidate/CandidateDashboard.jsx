@@ -26,7 +26,8 @@ export default function CustomerDashboard({ user }) {
   // Daily Booking State
   const [selectedCategory, setSelectedCategory] = useState('');
   const [description, setDescription] = useState('');
-  const [address, setAddress] = useState('Detecting your location...');
+  const [address, setAddress] = useState('');
+  const [manualAddress, setManualAddress] = useState('');
   const [latitude, setLatitude] = useState(24.8607);
   const [longitude, setLongitude] = useState(67.0011);
   const [gpsLoading, setGpsLoading] = useState(false);
@@ -97,23 +98,33 @@ export default function CustomerDashboard({ user }) {
       return;
     }
     setGpsLoading(true);
-    setAddress('Detecting your location...');
     navigator.geolocation.getCurrentPosition(
       (position) => {
         const lat = position.coords.latitude;
         const lon = position.coords.longitude;
         setLatitude(lat);
         setLongitude(lon);
-        setAddress(`${lat.toFixed(5)}, ${lon.toFixed(5)} (GPS)`);
+        setAddress((currentAddress) => currentAddress.trim() ? currentAddress : `${lat.toFixed(5)}, ${lon.toFixed(5)} (GPS)`);
         setGpsLoading(false);
       },
       (error) => {
         console.warn('Geolocation error:', error);
-        setAddress('Location access denied. Please type your address.');
+        setAddress((currentAddress) => currentAddress.trim() ? currentAddress : 'Location access denied. Please type your address manually.');
         setGpsLoading(false);
       },
       { enableHighAccuracy: true, timeout: 10000 }
     );
+  };
+
+  const getDisplayAddress = (location) => {
+    const rawAddress = location?.manualAddress?.trim?.() || location?.address?.trim?.() || '';
+    if (rawAddress) return rawAddress;
+
+    if (location?.latitude != null && location?.longitude != null) {
+      return `${Number(location.latitude).toFixed(4)}, ${Number(location.longitude).toFixed(4)}`;
+    }
+
+    return 'Address not provided';
   };
 
   const updateTrackingStats = (coords) => {
@@ -514,6 +525,12 @@ export default function CustomerDashboard({ user }) {
   const handleSendJob = async () => {
     if (!selectedCategory) return toast.warning('Please select a service category');
 
+    const trimmedAddress = address.trim();
+    const trimmedManualAddress = manualAddress.trim();
+    if (!trimmedManualAddress) {
+      return toast.warning('Please enter your address in the manual address field.');
+    }
+
     let finalAudioUrl = audioUrl;
     let finalVoiceTranscript = voiceTranscript;
 
@@ -562,7 +579,8 @@ export default function CustomerDashboard({ user }) {
           location: {
             latitude,
             longitude,
-            address
+            address: trimmedAddress,
+            manualAddress: trimmedManualAddress
           },
           paymentAmount: 1500 // PKR flat rate
         })
@@ -892,7 +910,7 @@ export default function CustomerDashboard({ user }) {
                   </div>
                   <div className="form-group">
                     <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span>Service Address</span>
+                      <span>Service Location</span>
                       <button
                         type="button"
                         onClick={fetchLocation}
@@ -917,7 +935,8 @@ export default function CustomerDashboard({ user }) {
                     </label>
                     <input
                       type="text"
-                      placeholder="Street address, city"
+                      name="serviceAddress"
+                      placeholder="Type coordinates or location hint"
                       value={address}
                       onChange={(e) => setAddress(e.target.value)}
                       className="form-input"
@@ -927,11 +946,31 @@ export default function CustomerDashboard({ user }) {
                         opacity: gpsLoading ? 0.7 : 1
                       }}
                     />
+                    <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginTop: '6px' }}>
+                      Use this field for GPS-based location or a nearby landmark. Leave blank if you want to type your full address below.
+                    </span>
                     {latitude !== 24.8607 && (
                       <span style={{ fontSize: '11px', color: 'var(--success-color)', marginTop: '4px' }}>
                         ✓ Real GPS coordinates detected — map is centered on your location
                       </span>
                     )}
+
+                    <div style={{ marginTop: '18px' }}>
+                      <label className="form-label">Manual Address *</label>
+                      <input
+                        type="text"
+                        name="manualAddress"
+                        placeholder="Enter your full address here"
+                        value={manualAddress}
+                        onChange={(e) => setManualAddress(e.target.value)}
+                        className="form-input"
+                        required
+                        style={{ height: '54px' }}
+                      />
+                      <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginTop: '6px' }}>
+                        This is the address workers will use to find you.
+                      </span>
+                    </div>
                   </div>
                 </div>
 
@@ -1119,7 +1158,18 @@ export default function CustomerDashboard({ user }) {
               {/* Sidebar Action Column: Details, Live Chat and Payments */}
               <div style={{ borderLeft: '1px solid var(--border-grey)', paddingLeft: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
                 
-                {/* 1. Assigned Worker Profile */}
+                {/* 1. Service Address Summary */}
+                <div style={{ background: 'var(--bg-input)', padding: '16px', borderRadius: '12px', border: '1px solid var(--border-grey)' }}>
+                  <h4 style={{ fontSize: '16px', marginBottom: '8px' }}>Your Service Address</h4>
+                  <p style={{ fontSize: '13px', color: '#fff', fontWeight: '600', lineHeight: 1.5 }}>
+                    {getDisplayAddress(activeJob?.location || { address, manualAddress, latitude, longitude })}
+                  </p>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '6px' }}>
+                    This is the address the worker will see for your request.
+                  </p>
+                </div>
+
+                {/* 2. Assigned Worker Profile */}
                 <div>
                   <h4 style={{ fontSize: '16px', marginBottom: '12px' }}>Worker Profile</h4>
                   {workerDetails ? (
@@ -1141,7 +1191,7 @@ export default function CustomerDashboard({ user }) {
                   )}
                 </div>
 
-                {/* 2. Escrow Payment Action */}
+                {/* 3. Escrow Payment Action */}
                 {workerDetails && (
                   <div style={{ background: 'rgba(255, 107, 0, 0.05)', border: '1px solid rgba(255,107,0,0.3)', borderRadius: '12px', padding: '16px' }}>
                     <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '8px' }}>
@@ -1180,7 +1230,7 @@ export default function CustomerDashboard({ user }) {
                   </div>
                 )}
 
-                {/* 3. Live Chat */}
+                {/* 4. Live Chat */}
                 {workerDetails && (
                   <div>
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '10px' }}>

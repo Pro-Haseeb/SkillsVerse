@@ -23,7 +23,36 @@ export default function WorkerDashboard({ user }) {
   const [profile, setProfile] = useState(user);
   const [isAvailable, setIsAvailable] = useState(user.isAvailable);
   const [jobsHistory, setJobsHistory] = useState([]);
+  const isContractorUser = Boolean(
+    (Array.isArray(profile?.skills) && profile.skills.includes('Contractor')) ||
+    profile?.isContractor ||
+    profile?.contractorProfile?.status === 'pending' ||
+    profile?.contractorProfile?.status === 'approved' ||
+    profile?.contractorProfile?.status === 'rejected'
+  );
+  const [contractorForm, setContractorForm] = useState({
+    companyName: user.contractorProfile?.companyName || '',
+    experienceYears: user.contractorProfile?.experienceYears || '',
+    specialization: user.contractorProfile?.specialization || '',
+    serviceArea: user.contractorProfile?.serviceArea || ''
+  });
+  const [contractorLoading, setContractorLoading] = useState(false);
+  const [contractorError, setContractorError] = useState('');
+  const [contractorSuccess, setContractorSuccess] = useState('');
+
+  useEffect(() => {
+    if (profile?.contractorProfile) {
+      setContractorForm({
+        companyName: profile.contractorProfile.companyName || '',
+        experienceYears: profile.contractorProfile.experienceYears || '',
+        specialization: profile.contractorProfile.specialization || '',
+        serviceArea: profile.contractorProfile.serviceArea || ''
+      });
+    }
+  }, [profile]);
+
   const [constructionProjects, setConstructionProjects] = useState([]);
+  const [contractorCityFilter, setContractorCityFilter] = useState('');
   const itemsPerPage = 10;
   const [historyPage, setHistoryPage] = useState(1);
   const [constructionPage, setConstructionPage] = useState(1);
@@ -58,21 +87,6 @@ export default function WorkerDashboard({ user }) {
   const chatRecordingIntervalRef = useRef(null);
   const chatChunksRef = useRef([]);
 
-  const [constructorForm, setConstructorForm] = useState({
-    constructionDetails: '',
-    experienceYears: '',
-    portfolioUrl: ''
-  });
-  const isContractorUser = Boolean(
-    (Array.isArray(profile?.skills) && profile.skills.includes('Contractor')) ||
-    profile?.isContractor ||
-    profile?.contractorProfile?.status === 'pending' ||
-    profile?.contractorProfile?.status === 'approved' ||
-    profile?.contractorProfile?.status === 'rejected'
-  );
-  const [constructorLoading, setConstructorLoading] = useState(false);
-  const [constructorError, setConstructorError] = useState('');
-  const [constructorSuccess, setConstructorSuccess] = useState('');
   const profileRef = useRef(null);
   const availabilityRef = useRef(null);
   const requestRef = useRef(null);
@@ -157,10 +171,29 @@ export default function WorkerDashboard({ user }) {
   const getPaginatedItems = (items, page) => items.slice((page - 1) * itemsPerPage, page * itemsPerPage);
   const getTotalPages = (items) => Math.max(1, Math.ceil(items.length / itemsPerPage));
 
+  const filteredConstructionProjects = constructionProjects.filter((job) => {
+    const normalizedFilter = contractorCityFilter.trim().toLowerCase();
+    if (!normalizedFilter) return true;
+
+    const addressText = [
+      job.location?.manualAddress,
+      job.location?.address,
+      job.customer?.name,
+      job.category
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+
+    return addressText.includes(normalizedFilter);
+  });
+
+  const filteredContractorOffers = filteredConstructionProjects.filter(job => job.status === 'contractor_offers_sent');
+
   const visibleHistory = getPaginatedItems(jobsHistory, historyPage);
   const historyTotalPages = getTotalPages(jobsHistory);
-  const visibleConstruction = getPaginatedItems(constructionProjects, constructionPage);
-  const constructionTotalPages = getTotalPages(constructionProjects);
+  const visibleConstruction = getPaginatedItems(filteredConstructionProjects, constructionPage);
+  const constructionTotalPages = getTotalPages(filteredConstructionProjects);
 
   // Trigger onboarding walkthrough if first time login
   useEffect(() => {
@@ -191,6 +224,17 @@ export default function WorkerDashboard({ user }) {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  const getAddressText = (location) => {
+    const rawAddress = location?.manualAddress?.trim?.() || location?.address?.trim?.() || '';
+    if (rawAddress) return rawAddress;
+
+    if (location?.latitude != null && location?.longitude != null) {
+      return `${Number(location.latitude).toFixed(4)}, ${Number(location.longitude).toFixed(4)}`;
+    }
+
+    return 'Address not provided';
+  };
 
   const getDistanceKm = (fromLat, fromLon, toLat, toLon) => {
     if ([fromLat, fromLon, toLat, toLon].some((value) => value === undefined || value === null || Number.isNaN(Number(value)))) {
@@ -315,6 +359,43 @@ export default function WorkerDashboard({ user }) {
       }
     } catch (error) {
       console.error(error);
+    }
+  };
+
+  const handleContractorSubmit = async (e) => {
+    e.preventDefault();
+    setContractorLoading(true);
+    setContractorError('');
+    setContractorSuccess('');
+
+    try {
+      const response = await fetch(`${API_URL}/api/workers/request-contractor`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          companyName: contractorForm.companyName,
+          experienceYears: Number(contractorForm.experienceYears),
+          specialization: contractorForm.specialization,
+          serviceArea: contractorForm.serviceArea
+        })
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        setContractorSuccess('Contractor profile submitted successfully. Pending admin review.');
+        toast.success('Contractor profile submitted!');
+        loadProfile(); // Refresh profile state
+      } else {
+        setContractorError(data.error || 'Failed to submit contractor profile.');
+      }
+    } catch (err) {
+      console.error(err);
+      setContractorError('Network error. Failed to submit profile.');
+    } finally {
+      setContractorLoading(false);
     }
   };
 
@@ -485,49 +566,6 @@ export default function WorkerDashboard({ user }) {
     }
   };
 
-  const handleConstructorInput = (field, value) => {
-    setConstructorForm((prev) => ({ ...prev, [field]: value }));
-  };
-
-  const handleConstructorRequest = async () => {
-    setConstructorError('');
-    setConstructorSuccess('');
-
-    if (!constructorForm.constructionDetails.trim() || !constructorForm.experienceYears || !constructorForm.portfolioUrl.trim()) {
-      setConstructorError('Please complete all constructor verification fields.');
-      return;
-    }
-
-    setConstructorLoading(true);
-    try {
-      const response = await fetch(`${API_URL}/api/workers/request-constructor`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify({
-          constructionDetails: constructorForm.constructionDetails,
-          experienceYears: Number(constructorForm.experienceYears),
-          portfolioUrl: constructorForm.portfolioUrl
-        })
-      });
-      const data = await response.json();
-      if (response.ok) {
-        setConstructorSuccess(data.message || 'Constructor verification request submitted.');
-        setConstructorForm({ constructionDetails: '', experienceYears: '', portfolioUrl: '' });
-        await loadProfile();
-      } else {
-        setConstructorError(data.error || 'Failed to submit constructor request.');
-      }
-    } catch (error) {
-      console.error('Constructor request failed:', error);
-      setConstructorError('Request failed. Please try again.');
-    } finally {
-      setConstructorLoading(false);
-    }
-  };
-
   const handleRejectJob = async () => {
     if (!activeJob) return;
     try {
@@ -551,6 +589,8 @@ export default function WorkerDashboard({ user }) {
   };
 
   // Sockets Setup
+  const connectionErrorShownRef = useRef(false);
+
   const setupSockets = (worker) => {
     if (socketRef.current) socketRef.current.disconnect();
 
@@ -559,12 +599,25 @@ export default function WorkerDashboard({ user }) {
 
     socket.emit('register', worker._id);
 
+    socket.on('connect', () => {
+      if (connectionErrorShownRef.current) {
+        toast.success('Tracking connection restored.');
+        connectionErrorShownRef.current = false;
+      }
+    });
+
     socket.on('connect_error', () => {
-      toast.error('Connection lost. Reconnecting to tracking service...');
+      if (!connectionErrorShownRef.current) {
+        toast.error('Connection lost. Reconnecting to tracking service...');
+        connectionErrorShownRef.current = true;
+      }
     });
 
     socket.on('disconnect', () => {
-      toast.info('Tracking connection disconnected. Reconnect when network is available.');
+      if (!connectionErrorShownRef.current) {
+        toast.info('Tracking connection disconnected. Reconnect when network is available.');
+        connectionErrorShownRef.current = true;
+      }
     });
 
     // Listen for incoming match requests
@@ -876,10 +929,8 @@ export default function WorkerDashboard({ user }) {
   const pageMeta = {
     overview: { title: 'Overview', subtitle: 'Your earnings, profile, and performance at a glance.' },
     'active-job': { title: 'Active Job', subtitle: 'Navigate to the customer, chat, and update job status.' },
-    'construction': { title: 'Construction Projects', subtitle: 'Review assigned construction projects and locations.' },
+    'construction': { title: 'Contractor Projects', subtitle: 'Review assigned contractor projects and locations.' },
     'contractor-offers': { title: 'Contractor Offers', subtitle: 'Review contractor-specific service opportunities and profile status.' },
-    'contractor-projects': { title: 'Contractor Projects', subtitle: 'Track your active contractor assignments and project progress.' },
-    'constructor-verification': { title: 'Constructor Verification', subtitle: 'Request and monitor constructor verification status.' },
     history: { title: 'Service History', subtitle: 'Review past jobs and payment records.' },
   }[activeTab];
 
@@ -945,7 +996,7 @@ export default function WorkerDashboard({ user }) {
               <div>
                 <span className="form-label" style={{ fontSize: '11px' }}>Customer Location</span>
                 <p style={{ fontSize: '13px', color: '#fff', fontWeight: '600' }}>
-                  {incomingJob.customer.location.address || `${incomingJob.customer.location.latitude.toFixed(4)}, ${incomingJob.customer.location.longitude.toFixed(4)}`}
+                  {getAddressText(incomingJob.customer?.location)}
                 </p>
                 <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>({incomingJob.distance} km away)</p>
               </div>
@@ -1086,7 +1137,7 @@ export default function WorkerDashboard({ user }) {
 
                   <div style={{ background: 'var(--bg-input)', padding: '16px', borderRadius: '12px', border: '1px solid var(--border-grey)', marginBottom: '20px' }}>
                     <span className="form-label" style={{ fontSize: '10px' }}>Customer Address</span>
-                    <p style={{ fontSize: '13px', fontWeight: '600', color: '#fff', marginBottom: '10px' }}>{activeJob.location.address}</p>
+                    <p style={{ fontSize: '13px', fontWeight: '600', color: '#fff', marginBottom: '10px' }}>{getAddressText(activeJob.location)}</p>
 
                     <span className="form-label" style={{ fontSize: '10px' }}>Service Category</span>
                     <p style={{ fontSize: '13px', fontWeight: '600' }}>{activeJob.category}</p>
@@ -1285,40 +1336,94 @@ export default function WorkerDashboard({ user }) {
             </div>
             <div>
               <span className="form-label">Available opportunities</span>
-              <p className="worker-profile-value">{constructionProjects.length > 0 ? `${constructionProjects.length} project${constructionProjects.length > 1 ? 's' : ''} available` : 'No contractor offers yet'}</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'contractor-projects' && (
-        <div className="card card--padded">
-          <div className="section-header">
-            <Hammer size={20} color="var(--primary-orange)" />
-            <div className="section-header__text">
-              <h3>Contractor Projects</h3>
-              <p>Track your assigned contractor projects and their progress.</p>
+              <p className="worker-profile-value">{filteredContractorOffers.length > 0 ? `${filteredContractorOffers.length} offer${filteredContractorOffers.length > 1 ? 's' : ''} available` : 'No contractor offers yet'}</p>
             </div>
           </div>
 
-          {constructionProjects.length === 0 ? (
-            <EmptyState
-              icon={Hammer}
-              title="No contractor projects yet"
-              description="Projects assigned by admin will appear here for tracking."
-            />
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              {constructionProjects.map((project) => (
-                <div key={project._id} className="card" style={{ border: '1px solid var(--border-grey)', padding: '16px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', marginBottom: '8px' }}>
-                    <h4 style={{ fontSize: '16px', color: '#fff' }}>{project.category}</h4>
-                    <StatusBadge status={project.status} />
-                  </div>
-                  <p style={{ color: 'var(--text-secondary)', marginBottom: '8px' }}>{project.description || 'No description provided.'}</p>
-                  <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{project.location?.address || 'Location pending'}</p>
-                </div>
-              ))}
+          <div style={{ marginTop: '20px', display: 'flex', flexWrap: 'wrap', gap: '14px', alignItems: 'flex-end' }}>
+            <div style={{ flex: '1 1 320px' }}>
+              <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Search projects by city
+              </label>
+              <input
+                type="text"
+                value={contractorCityFilter}
+                onChange={(e) => {
+                  setContractorCityFilter(e.target.value);
+                  setConstructionPage(1);
+                }}
+                placeholder="Type city or neighborhood"
+                style={{ width: '100%', background: 'var(--bg-input)', border: '1px solid var(--border-grey)', borderRadius: '8px', padding: '10px 12px', color: '#f5f5f7', fontSize: '13px', fontFamily: 'inherit', boxSizing: 'border-box' }}
+              />
+            </div>
+            <div style={{ minWidth: '220px', color: 'var(--text-secondary)', fontSize: '13px' }}>
+              {contractorCityFilter.trim()
+                ? `Filtering offers by city: "${contractorCityFilter.trim()}"`
+                : 'Showing all contractor offers.'}
+            </div>
+          </div>
+
+          {filteredContractorOffers.length > 0 && (
+            <div style={{ marginTop: '20px' }}>
+              <div style={{ marginBottom: '16px' }}>
+                <strong style={{ fontSize: '14px', color: '#fff' }}>Pending Contractor Offer(s)</strong>
+                <p style={{ margin: '6px 0 0', color: 'var(--text-secondary)', fontSize: '13px' }}>Accept any project offer to claim it, or reject if it's not the right fit.</p>
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '820px' }}>
+                  <thead>
+                    <tr style={{ textAlign: 'left', color: 'var(--text-secondary)', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+                      <th style={{ padding: '12px 14px', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Project</th>
+                      <th style={{ padding: '12px 14px', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Description</th>
+                      <th style={{ padding: '12px 14px', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Customer</th>
+                      <th style={{ padding: '12px 14px', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Location</th>
+                      <th style={{ padding: '12px 14px', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Budget</th>
+                      <th style={{ padding: '12px 14px', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody style={{ color: '#fff' }}>
+                    {filteredContractorOffers.map((job) => (
+                      <tr key={job._id} style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                        <td style={{ padding: '14px' }}>
+                          <div style={{ fontWeight: 700 }}>{job.category}</div>
+                          <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Offer received</div>
+                        </td>
+                        <td style={{ padding: '14px', maxWidth: '280px' }}>
+                          <div style={{ fontSize: '13px', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={job.description}>{job.description || 'No description provided.'}</div>
+                        </td>
+                        <td style={{ padding: '14px' }}>
+                          <div style={{ fontWeight: 600 }}>{job.customer?.name || 'Unknown'}</div>
+                          <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{job.customer?.phone || 'No phone'}</div>
+                        </td>
+                        <td style={{ padding: '14px', maxWidth: '220px' }}>
+                          <div style={{ fontSize: '13px', color: '#fff', fontWeight: 600 }}>{job.location?.manualAddress || job.location?.address || 'Not provided'}</div>
+                        </td>
+                        <td style={{ padding: '14px' }}>
+                          <div style={{ fontSize: '13px', color: '#fff', fontWeight: 600 }}>PKR {job.payment?.amount?.toLocaleString() || 'N/A'}</div>
+                        </td>
+                        <td style={{ padding: '14px' }}>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                            <button
+                              onClick={() => handleConstructionResponse(job._id, 'accept')}
+                              className="btn btn-primary"
+                              style={{ minWidth: '110px', padding: '8px 12px', fontSize: '13px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                            >
+                              <Check size={14} /> Accept
+                            </button>
+                            <button
+                              onClick={() => handleConstructionResponse(job._id, 'reject')}
+                              className="btn btn-secondary"
+                              style={{ minWidth: '110px', padding: '8px 12px', fontSize: '13px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', borderColor: 'var(--error-color)', color: 'var(--error-color)' }}
+                            >
+                              <X size={14} /> Reject
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>
@@ -1329,16 +1434,16 @@ export default function WorkerDashboard({ user }) {
           <div className="section-header">
             <Hammer size={20} color="var(--primary-orange)" />
             <div className="section-header__text">
-              <h3>Construction Projects</h3>
-              <p>Review assigned construction projects with location maps.</p>
+              <h3>Contractor Projects</h3>
+              <p>Review assigned contractor projects with location maps.</p>
             </div>
           </div>
 
           {constructionProjects.length === 0 ? (
             <EmptyState
               icon={Hammer}
-              title="No construction projects assigned"
-              description="Admin-assigned construction projects will appear here."
+              title="No contractor projects assigned"
+              description="Admin-assigned contractor projects will appear here."
             />
           ) : (
             <>
@@ -1449,111 +1554,6 @@ export default function WorkerDashboard({ user }) {
               />
             </>
           )}
-        </div>
-      )}
-
-      {activeTab === 'constructor-verification' && (
-        <div className="card card--padded">
-          <div className="section-header">
-            <Building2 size={20} color="var(--primary-orange)" />
-            <div className="section-header__text">
-              <h3>Constructor Verification</h3>
-              <p>Submit your constructor credentials and track admin review.</p>
-            </div>
-          </div>
-
-          <div style={{ display: 'grid', gap: '18px' }}>
-            <div style={{ display: 'grid', gap: '12px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
-                <div>
-                  <span className="form-label">Current status</span>
-                  <p style={{ fontSize: '14px', color: '#fff', marginTop: '4px' }}>
-                    {profile.constructorDetails?.status === 'approved' ? 'Approved Constructor'
-                      : profile.constructorDetails?.status === 'rejected' ? 'Verification Rejected'
-                      : profile.constructorDetails?.status === 'pending' ? 'Pending Review'
-                      : 'Not requested'}
-                  </p>
-                </div>
-                {profile.constructorDetails?.status === 'approved' ? (
-                  <StatusBadge status="success" label="Constructor" />
-                ) : profile.constructorDetails?.status === 'pending' ? (
-                  <StatusBadge status="info" label="Pending" />
-                ) : (
-                  <StatusBadge status="secondary" label="Not requested" />
-                )}
-              </div>
-
-              <div style={{ background: 'var(--bg-input)', borderRadius: '14px', padding: '18px', border: '1px solid var(--border-grey)' }}>
-                <h4 style={{ fontSize: '16px', marginBottom: '14px' }}>Why verify as a constructor?</h4>
-                <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.7 }}>
-                  Verified constructors can receive construction projects and manage larger assignments across construction and renovation jobs. Submit details about your experience and portfolio for admin review.
-                </p>
-              </div>
-            </div>
-
-            <div className="card card--padded" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-grey)' }}>
-              <div style={{ display: 'grid', gap: '16px' }}>
-                <div>
-                  <label className="form-label" htmlFor="constructor-details">Constructor experience details</label>
-                  <textarea
-                    id="constructor-details"
-                    value={constructorForm.constructionDetails}
-                    onChange={(e) => handleConstructorInput('constructionDetails', e.target.value)}
-                    className="form-input"
-                    rows={5}
-                    placeholder="Describe your constructor experience, certifications, and team management background"
-                    style={{ minHeight: '120px' }}
-                  />
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                  <div>
-                    <label className="form-label" htmlFor="constructor-experience">Years of experience</label>
-                    <input
-                      id="constructor-experience"
-                      type="number"
-                      min="0"
-                      value={constructorForm.experienceYears}
-                      onChange={(e) => handleConstructorInput('experienceYears', e.target.value)}
-                      className="form-input"
-                      placeholder="e.g. 5"
-                    />
-                  </div>
-                  <div>
-                    <label className="form-label" htmlFor="constructor-portfolio">Portfolio URL</label>
-                    <input
-                      id="constructor-portfolio"
-                      type="url"
-                      value={constructorForm.portfolioUrl}
-                      onChange={(e) => handleConstructorInput('portfolioUrl', e.target.value)}
-                      className="form-input"
-                      placeholder="https://portfolio.example.com"
-                    />
-                  </div>
-                </div>
-
-                {constructorError && (
-                  <div className="auth-alert auth-alert--error" role="alert">
-                    {constructorError}
-                  </div>
-                )}
-                {constructorSuccess && (
-                  <div className="auth-alert auth-alert--success" role="status">
-                    {constructorSuccess}
-                  </div>
-                )}
-
-                <button
-                  type="button"
-                  onClick={handleConstructorRequest}
-                  className="btn btn-primary"
-                  disabled={constructorLoading || profile.constructorDetails?.status === 'pending' || profile.constructorDetails?.status === 'approved'}
-                >
-                  {constructorLoading ? 'Submitting request…' : profile.constructorDetails?.status === 'pending' ? 'Request pending' : 'Request constructor verification'}
-                </button>
-              </div>
-            </div>
-          </div>
         </div>
       )}
 

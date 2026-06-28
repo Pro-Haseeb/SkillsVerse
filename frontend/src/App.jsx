@@ -12,7 +12,7 @@ import WorkerDashboard from './pages/worker/WorkerDashboard';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import Footer from './components/shared/Footer';
 
-export const API_URL = import.meta.env.VITE_API_URL || 'https://skillsverse-8x82.onrender.com';
+export const API_URL = import.meta.env.VITE_API_URL || '';
 
 function Navigation({ user, logout }) {
   const navigate = useNavigate();
@@ -51,8 +51,8 @@ function Navigation({ user, logout }) {
             )}
             {user.role === 'worker' && (
               <Link to="/worker" className="nav-link flex items-center gap-1" onClick={() => setMobileMenuOpen(false)}>
-                {user.isConstructor ? <Building2 size={16} /> : <HardHat size={16} />}
-                {user.isConstructor ? 'Constructor Workspace' : 'Worker Workspace'}
+                {user.isContractor ? <Building2 size={16} /> : <HardHat size={16} />}
+                {user.isContractor ? 'Contractor Workspace' : 'Worker Workspace'}
               </Link>
             )}
             {user.role === 'admin' && (
@@ -62,8 +62,8 @@ function Navigation({ user, logout }) {
             )}
             <div className="nav-link flex items-center gap-1" style={{ color: '#fff', fontWeight: 600 }}>
               <User size={16} style={{ color: 'var(--primary-orange)' }} /> {user.name}
-              {user.isConstructor && (
-                <span style={{ fontSize: '11px', background: 'var(--primary-orange)', padding: '2px 8px', borderRadius: '4px', marginLeft: '8px' }}>Constructor</span>
+              {user.isContractor && (
+                <span style={{ fontSize: '11px', background: 'var(--primary-orange)', padding: '2px 8px', borderRadius: '4px', marginLeft: '8px' }}>Contractor</span>
               )}
             </div>
             <button onClick={handleLogout} className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '12px' }}>

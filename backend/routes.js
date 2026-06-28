@@ -134,7 +134,7 @@ router.post('/auth/login', async (req, res) => {
         return res.status(400).json({ error: 'Invalid worker credentials' });
       }
 
-      console.log('Worker found:', worker.name, 'isConstructor:', worker.isConstructor, 'status:', worker.status);
+      console.log('Worker found:', worker.name, 'status:', worker.status);
 
       const isMatch = await bcrypt.compare(password, worker.password);
       if (!isMatch) {
@@ -152,7 +152,7 @@ router.post('/auth/login', async (req, res) => {
       }
 
       const token = jwt.sign({ id: worker._id, role: 'worker', status: worker.status }, JWT_SECRET, { expiresIn: '24h' });
-      console.log('Login successful for:', worker.name, 'isConstructor:', worker.isConstructor);
+      console.log('Login successful for:', worker.name);
       const isContractor = Array.isArray(worker.skills) && worker.skills.includes('Contractor');
       return res.json({
         token,
@@ -164,7 +164,6 @@ router.post('/auth/login', async (req, res) => {
           role: 'worker',
           status: worker.status,
           isAvailable: worker.isAvailable,
-          isConstructor: worker.isConstructor || false,
           isContractor,
           skills: worker.skills,
           contractorProfile: worker.contractorProfile || {}
@@ -242,37 +241,39 @@ router.put('/workers/availability', authenticateToken, async (req, res) => {
   }
 });
 
-// Request constructor status
-router.post('/workers/request-constructor', authenticateToken, async (req, res) => {
+// Request contractor status
+router.post('/workers/request-contractor', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'worker') return res.status(403).json({ error: 'Unauthorized' });
     
-    const { constructionDetails, experienceYears, portfolioUrl } = req.body;
+    const { companyName, experienceYears, specialization, serviceArea } = req.body;
     
     const worker = await Worker.findById(req.user.id);
     if (!worker) return res.status(404).json({ error: 'Worker not found' });
     
-    if (worker.constructorDetails?.status === 'pending') {
-      return res.status(400).json({ error: 'Constructor verification request is already pending review' });
-    }
-    
-    worker.constructorDetails = {
-      constructionDetails,
-      experienceYears,
-      portfolioUrl,
-      requestedAt: new Date(),
+    // Set/Update contractor details
+    worker.contractorProfile = {
+      companyName: companyName || '',
+      experienceYears: Number(experienceYears) || 0,
+      specialization: specialization || '',
+      serviceArea: serviceArea || '',
       status: 'pending' // Requires admin approval
     };
+    
+    // Also ensure they have the Contractor skill
+    if (Array.isArray(worker.skills) && !worker.skills.includes('Contractor')) {
+      worker.skills.push('Contractor');
+    }
     
     await worker.save();
     
     return res.json({ 
-      message: 'Constructor request submitted. Pending admin approval.',
+      message: 'Contractor profile submitted. Pending admin approval.',
       worker: { ...worker.toObject(), role: 'worker' }
     });
   } catch (error) {
-    console.error('Constructor request error:', error);
-    res.status(500).json({ error: 'Failed to submit constructor request' });
+    console.error('Contractor request error:', error);
+    res.status(500).json({ error: 'Failed to submit contractor request' });
   }
 });
 
@@ -346,33 +347,6 @@ router.put('/admin/workers/:id/contractor-approval', authenticateToken, async (r
     if (!worker) return res.status(404).json({ error: 'Worker not found' });
     res.json({ message: `Contractor profile ${contractorStatus} successfully`, worker });
   } catch (error) {
-    res.status(500).json({ error: 'Operation failed' });
-  }
-});
-
-// Approve or reject constructor verification request
-router.put('/admin/workers/:id/constructor-approval', authenticateToken, async (req, res) => {
-  try {
-    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
-    const { constructorStatus } = req.body; // 'approved' or 'rejected'
-
-    if (!['approved', 'rejected'].includes(constructorStatus)) {
-      return res.status(400).json({ error: 'Invalid constructorStatus value' });
-    }
-
-    const worker = await Worker.findById(req.params.id);
-    if (!worker) return res.status(404).json({ error: 'Worker not found' });
-    if (!worker.constructorDetails || worker.constructorDetails.status !== 'pending') {
-      return res.status(400).json({ error: 'No pending constructor verification request found' });
-    }
-
-    worker.constructorDetails.status = constructorStatus;
-    worker.isConstructor = constructorStatus === 'approved';
-    await worker.save();
-
-    res.json({ message: `Constructor verification ${constructorStatus} successfully`, worker: worker.toObject() });
-  } catch (error) {
-    console.error('Constructor approval error:', error);
     res.status(500).json({ error: 'Operation failed' });
   }
 });
@@ -535,7 +509,8 @@ router.post('/jobs', authenticateToken, async (req, res) => {
       location: {
         latitude: Number(location.latitude),
         longitude: Number(location.longitude),
-        address: location.address
+        address: location.address,
+        manualAddress: location.manualAddress || location.address || ''
       },
       tracking: {
         active: false,
@@ -623,30 +598,103 @@ router.put('/jobs/:id/assign', authenticateToken, async (req, res) => {
     worker.totalRequests += 1;
     await worker.save();
 
-    res.json({ message: 'Worker assigned successfully', job });
+    // Return job with populated worker details
+    const populatedJob = await Job.findById(job._id)
+      .populate('customer', 'name phone email')
+      .populate('worker', 'name phone');
+
+    res.json({ message: 'Worker assigned successfully', job: populatedJob });
   } catch (error) {
     res.status(500).json({ error: 'Failed to assign worker' });
   }
 });
 
-// Get construction projects assigned to worker
+// Send construction project to all approved contractors
+router.post('/jobs/:id/send-to-contractors', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+
+    const job = await Job.findById(req.params.id);
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    if (job.type !== 'construction') return res.status(400).json({ error: 'Only construction jobs can be sent to contractors' });
+    if (job.status !== 'pending') {
+      return res.status(400).json({ error: 'This construction project is already in assignment flow or has been approved' });
+    }
+    if (job.worker) {
+      return res.status(400).json({ error: 'This project already has an assigned contractor' });
+    }
+
+    // Find approved contractors (workers with Contractor skill), optionally filtered by city/service area
+    const cityFilter = String(req.body?.city || '').trim().toLowerCase();
+    const baseQuery = {
+      skills: 'Contractor',
+      status: 'approved',
+      isBlocked: false
+    };
+
+    let contractors = await Worker.find(baseQuery);
+    if (cityFilter) {
+      contractors = contractors.filter((c) => {
+        const serviceArea = String(c.contractorProfile?.serviceArea || '').toLowerCase();
+        return serviceArea.includes(cityFilter);
+      });
+    }
+
+    if (contractors.length === 0) {
+      return res.status(400).json({ error: cityFilter ? `No approved contractors found for ${cityFilter}` : 'No approved contractors found' });
+    }
+
+    // Update job status to indicate it's been sent to contractors
+    job.status = 'contractor_offers_sent';
+    job.contractorOffers = contractors.map(c => ({
+      contractorId: c._id,
+      status: 'pending',
+      sentAt: new Date()
+    }));
+    await job.save();
+
+    // TODO: Send real-time notifications to contractors via socket.io
+
+    res.json({ 
+      message: `Project sent to ${contractors.length} contractors`,
+      job 
+    });
+  } catch (error) {
+    console.error('Send to contractors error:', error);
+    res.status(500).json({ error: 'Failed to send to contractors' });
+  }
+});
+
+// Get construction projects assigned to worker or offered to a contractor
 router.get('/jobs/worker/construction', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'worker') return res.status(403).json({ error: 'Worker access required' });
-    
-    const jobs = await Job.find({ 
-      worker: req.user.id, 
+
+    const jobs = await Job.find({
       type: 'construction',
-      status: { $in: ['pending_acceptance', 'assigned', 'en_route', 'completed'] }
+      $or: [
+        {
+          worker: req.user.id,
+          status: { $in: ['pending_acceptance', 'pending_admin_approval', 'assigned', 'en_route', 'completed'] }
+        },
+        {
+          'contractorOffers': {
+            $elemMatch: {
+              contractorId: req.user.id,
+              status: 'pending'
+            }
+          }
+        }
+      ]
     }).populate('customer', 'name email phone').sort({ createdAt: -1 });
-    
+
     res.json(jobs);
   } catch (error) {
     res.status(500).json({ error: 'Failed to load construction projects' });
   }
 });
 
-// Worker responds to construction project assignment
+// Worker responds to construction project assignment or contractor offer
 router.put('/jobs/:id/worker-response', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'worker') return res.status(403).json({ error: 'Worker access required' });
@@ -654,37 +702,119 @@ router.put('/jobs/:id/worker-response', authenticateToken, async (req, res) => {
 
     const job = await Job.findById(req.params.id);
     if (!job) return res.status(404).json({ error: 'Job not found' });
-    
-    if (String(job.worker) !== req.user.id) {
-      return res.status(403).json({ error: 'This job is not assigned to you' });
-    }
-    
-    if (job.status !== 'pending_acceptance') {
-      return res.status(400).json({ error: 'This job is not pending acceptance' });
+
+    const isAssignedWorker = String(job.worker) === req.user.id;
+    const offerIndex = job.contractorOffers?.findIndex((offer) => String(offer.contractorId) === req.user.id && offer.status === 'pending');
+    const hasPendingOffer = offerIndex !== -1;
+
+    if (!isAssignedWorker && !hasPendingOffer) {
+      return res.status(403).json({ error: 'This job is not assigned or offered to you' });
     }
 
-    if (action === 'accept') {
+    if (isAssignedWorker) {
+      if (job.status !== 'pending_acceptance') {
+        return res.status(400).json({ error: 'This job is not pending acceptance' });
+      }
+
+      if (action === 'accept') {
+        job.status = 'assigned';
+        await job.save();
+        return res.json({ message: 'Construction project accepted', job });
+      }
+
+      if (action === 'reject') {
+        job.worker = null;
+        job.status = 'pending';
+        await job.save();
+
+        const worker = await Worker.findById(req.user.id);
+        if (worker) {
+          worker.totalRequests = Math.max(0, worker.totalRequests - 1);
+          await worker.save();
+        }
+
+        return res.json({ message: 'Construction project rejected', job });
+      }
+    }
+
+    if (hasPendingOffer) {
+      const offer = job.contractorOffers[offerIndex];
+      if (action === 'accept') {
+        job.worker = req.user.id;
+        job.status = 'pending_admin_approval';
+        job.contractorOffers = job.contractorOffers.map((offerItem, index) => {
+          if (index === offerIndex) {
+            return { ...offerItem.toObject(), status: 'accepted', respondedAt: new Date() };
+          }
+          return { ...offerItem.toObject(), status: 'rejected', respondedAt: new Date() };
+        });
+        await job.save();
+
+        const worker = await Worker.findById(req.user.id);
+        if (worker) {
+          worker.totalRequests += 1;
+          await worker.save();
+        }
+
+        return res.json({ message: 'Contractor offer accepted and pending admin approval', job });
+      }
+
+      if (action === 'reject') {
+        job.contractorOffers[offerIndex].status = 'rejected';
+        job.contractorOffers[offerIndex].respondedAt = new Date();
+        await job.save();
+        return res.json({ message: 'Contractor offer rejected', job });
+      }
+    }
+
+    res.status(400).json({ error: 'Invalid action. Use: accept or reject' });
+  } catch (error) {
+    console.error('Construction assignment response error:', error);
+    res.status(500).json({ error: 'Failed to respond to assignment' });
+  }
+});
+
+// Admin approves or rejects contractor-selected construction project
+router.put('/jobs/:id/admin-approval', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+    const { action } = req.body;
+    if (!['approve', 'reject'].includes(action)) {
+      return res.status(400).json({ error: 'Invalid action. Use: approve or reject' });
+    }
+
+    const job = await Job.findById(req.params.id);
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    if (job.status !== 'pending_admin_approval') {
+      return res.status(400).json({ error: 'This job is not awaiting admin approval' });
+    }
+    if (!job.worker) {
+      return res.status(400).json({ error: 'No contractor has claimed this job yet' });
+    }
+
+    if (action === 'approve') {
       job.status = 'assigned';
       await job.save();
-      res.json({ message: 'Construction project accepted', job });
-    } else if (action === 'reject') {
-      job.worker = null;
-      job.status = 'pending';
-      await job.save();
-      
-      // Decrement worker total requests
-      const worker = await Worker.findById(req.user.id);
-      if (worker) {
-        worker.totalRequests = Math.max(0, worker.totalRequests - 1);
-        await worker.save();
-      }
-      
-      res.json({ message: 'Construction project rejected', job });
-    } else {
-      res.status(400).json({ error: 'Invalid action. Use: accept or reject' });
+      return res.json({ message: 'Construction project approved by admin', job });
     }
+
+    // Reject the accepted contractor and clear the assignment so admin can resend
+    const rejectedWorkerId = job.worker;
+    job.worker = null;
+    job.status = 'pending';
+    job.contractorOffers = [];
+    await job.save();
+
+    const rejectedWorker = await Worker.findById(rejectedWorkerId);
+    if (rejectedWorker) {
+      rejectedWorker.totalRequests = Math.max(0, rejectedWorker.totalRequests - 1);
+      await rejectedWorker.save();
+    }
+
+    return res.json({ message: 'Construction project rejected by admin and reset to pending', job });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to respond to assignment' });
+    console.error('Admin approval error:', error);
+    res.status(500).json({ error: 'Failed to process admin approval' });
   }
 });
 
