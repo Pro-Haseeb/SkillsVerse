@@ -49,6 +49,7 @@ export default function CustomerDashboard({ user }) {
   const [etaMinutes, setEtaMinutes] = useState(null);
   const [trackingDistance, setTrackingDistance] = useState(null);
   const [trackingEta, setTrackingEta] = useState(null);
+  const [socketConnectionStatus, setSocketConnectionStatus] = useState('connected');
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [complaints, setComplaints] = useState([]);
   const [complaintMap, setComplaintMap] = useState({});
@@ -90,6 +91,7 @@ export default function CustomerDashboard({ user }) {
   const [conBudget, setConBudget] = useState('');
   const [conDescription, setConDescription] = useState('');
   const [conAddress, setConAddress] = useState('Clifton Block 5, Karachi');
+  const [conLocationHint, setConLocationHint] = useState('');
 
   // Fetch real GPS coordinates from browser
   const fetchLocation = () => {
@@ -125,6 +127,48 @@ export default function CustomerDashboard({ user }) {
     }
 
     return 'Address not provided';
+  };
+
+  const resolveConstructionLocation = () => {
+    return new Promise((resolve) => {
+      const fallbackAddress = conAddress.trim() || 'Location not provided';
+      const fallbackLocation = {
+        latitude: latitude || 24.8607,
+        longitude: longitude || 67.0011,
+        address: fallbackAddress
+      };
+
+      if (!navigator.geolocation) {
+        setConLocationHint('Geolocation is unavailable, so the saved location will be used.');
+        resolve(fallbackLocation);
+        return;
+      }
+
+      setGpsLoading(true);
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const lat = position.coords.latitude;
+          const lon = position.coords.longitude;
+          const gpsAddress = `${lat.toFixed(5)}, ${lon.toFixed(5)} (GPS)`;
+          setLatitude(lat);
+          setLongitude(lon);
+          setConAddress((currentAddress) => currentAddress.trim() ? currentAddress : gpsAddress);
+          setConLocationHint('Using your current location for this construction request.');
+          setGpsLoading(false);
+          resolve({
+            latitude: lat,
+            longitude: lon,
+            address: conAddress.trim() || gpsAddress
+          });
+        },
+        () => {
+          setConLocationHint('Using the saved location because current location access was denied.');
+          setGpsLoading(false);
+          resolve(fallbackLocation);
+        },
+        { enableHighAccuracy: true, timeout: 10000 }
+      );
+    });
   };
 
   const updateTrackingStats = (coords) => {
@@ -283,18 +327,39 @@ export default function CustomerDashboard({ user }) {
   const setupSocket = (jobId) => {
     if (socketRef.current) socketRef.current.disconnect();
 
-    const socket = io(API_URL);
+    connectionIssueRef.current = false;
+    const socket = io(API_URL, {
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000
+    });
     socketRef.current = socket;
 
     socket.emit('register', user.id);
     socket.emit('join_job', jobId);
 
+    socket.on('connect', () => {
+      setSocketConnectionStatus('connected');
+      if (connectionIssueRef.current) {
+        toast.success('Tracking connection restored.');
+        connectionIssueRef.current = false;
+      }
+    });
+
     socket.on('connect_error', () => {
-      toast.error('Connection lost. Tracking updates may pause until the network reconnects.');
+      setSocketConnectionStatus('reconnecting');
+      if (!connectionIssueRef.current) {
+        toast.error('Connection lost. Tracking updates may pause until the network reconnects.');
+        connectionIssueRef.current = true;
+      }
     });
 
     socket.on('disconnect', () => {
-      toast.info('Tracking connection temporarily disconnected.');
+      setSocketConnectionStatus('disconnected');
+      if (!connectionIssueRef.current) {
+        toast.info('Tracking connection temporarily disconnected.');
+        connectionIssueRef.current = true;
+      }
     });
 
     // Listen for worker accepted
@@ -316,11 +381,14 @@ export default function CustomerDashboard({ user }) {
 
     // Listen for job status change
     socket.on('job_status_updated', ({ status }) => {
-      setDispatchStatus(status === 'completed' ? 'completed' : 'accepted');
-      setActiveJob(prev => prev ? { ...prev, status } : prev);
       if (status === 'completed') {
+        resetActiveJobState('history');
         loadHistory();
+        return;
       }
+
+      setDispatchStatus('accepted');
+      setActiveJob(prev => prev ? { ...prev, status } : prev);
     });
 
     // Listen for incoming messages
@@ -527,8 +595,9 @@ export default function CustomerDashboard({ user }) {
 
     const trimmedAddress = address.trim();
     const trimmedManualAddress = manualAddress.trim();
-    if (!trimmedManualAddress) {
-      return toast.warning('Please enter your address in the manual address field.');
+    const hasAddressDetails = trimmedAddress || trimmedManualAddress;
+    if (!hasAddressDetails) {
+      return toast.warning('Please enter a service location or manual address before submitting.');
     }
 
     let finalAudioUrl = audioUrl;
@@ -579,7 +648,7 @@ export default function CustomerDashboard({ user }) {
           location: {
             latitude,
             longitude,
-            address: trimmedAddress,
+            address: trimmedAddress || trimmedManualAddress || 'Location not provided',
             manualAddress: trimmedManualAddress
           },
           paymentAmount: 1500 // PKR flat rate
@@ -663,6 +732,8 @@ export default function CustomerDashboard({ user }) {
     }
 
     try {
+      const constructionLocation = await resolveConstructionLocation();
+
       const response = await fetch(`${API_URL}/api/jobs`, {
         method: 'POST',
         headers: {
@@ -674,9 +745,9 @@ export default function CustomerDashboard({ user }) {
           category: conCategory,
           description: `Title: ${conTitle}. Description: ${conDescription}`,
           location: {
-            latitude: latitude || 24.8607,
-            longitude: longitude || 67.0011,
-            address: conAddress
+            latitude: constructionLocation.latitude,
+            longitude: constructionLocation.longitude,
+            address: constructionLocation.address
           },
           paymentAmount: Number(conBudget)
         })
@@ -700,12 +771,18 @@ export default function CustomerDashboard({ user }) {
   };
 
   // Cancel Job (For retry or cancel match)
-  const resetActiveJobState = () => {
+  const resetActiveJobState = (nextTab = 'history') => {
     setActiveJob(null);
     setDispatchStatus('');
     setWorkerDetails(null);
     setWorkerCoords(null);
+    setDistanceToWorker(null);
+    setEtaMinutes(null);
+    setTrackingDistance(null);
+    setTrackingEta(null);
     setMessages([]);
+    setSocketConnectionStatus('connected');
+    setActiveTab(nextTab);
     if (socketRef.current) socketRef.current.disconnect();
   };
 
@@ -746,7 +823,7 @@ export default function CustomerDashboard({ user }) {
       const data = await response.json();
       if (response.ok) {
         toast.success('Job rejected successfully');
-        resetActiveJobState();
+        resetActiveJobState('history');
         loadHistory();
       } else {
         toast.error(data.error || 'Failed to reject job');
@@ -771,8 +848,8 @@ export default function CustomerDashboard({ user }) {
       const data = await response.json();
       if (response.ok) {
         toast.success('Job marked as completed');
-        setDispatchStatus('completed');
-        setActiveJob(data.job);
+        resetActiveJobState('history');
+        loadHistory();
       } else {
         toast.error(data.error || 'Failed to complete job');
       }
@@ -956,7 +1033,7 @@ export default function CustomerDashboard({ user }) {
                     )}
 
                     <div style={{ marginTop: '18px' }}>
-                      <label className="form-label">Manual Address *</label>
+                      <label className="form-label">Manual Address (Optional)</label>
                       <input
                         type="text"
                         name="manualAddress"
@@ -964,11 +1041,10 @@ export default function CustomerDashboard({ user }) {
                         value={manualAddress}
                         onChange={(e) => setManualAddress(e.target.value)}
                         className="form-input"
-                        required
                         style={{ height: '54px' }}
                       />
                       <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginTop: '6px' }}>
-                        This is the address workers will use to find you.
+                        Leave this blank if the service location above is enough for the worker.
                       </span>
                     </div>
                   </div>
@@ -1104,6 +1180,27 @@ export default function CustomerDashboard({ user }) {
                           {etaMinutes !== null ? `${etaMinutes} min` : '--'}
                         </div>
                       </div>
+                    </div>
+                  )}
+
+                  {socketConnectionStatus !== 'connected' && (
+                    <div style={{
+                      marginBottom: '12px',
+                      padding: '10px 12px',
+                      borderRadius: '10px',
+                      border: socketConnectionStatus === 'reconnecting'
+                        ? '1px solid rgba(245, 158, 11, 0.35)'
+                        : '1px solid rgba(239, 68, 68, 0.35)',
+                      background: socketConnectionStatus === 'reconnecting'
+                        ? 'rgba(245, 158, 11, 0.1)'
+                        : 'rgba(239, 68, 68, 0.12)',
+                      color: socketConnectionStatus === 'reconnecting' ? '#fbbf24' : '#fca5a5',
+                      fontSize: '13px',
+                      fontWeight: 600
+                    }}>
+                      {socketConnectionStatus === 'reconnecting'
+                        ? 'Tracking is reconnecting — updates may pause briefly.'
+                        : 'Tracking is offline — reconnecting to the live feed.'}
                     </div>
                   )}
 
@@ -1400,6 +1497,9 @@ export default function CustomerDashboard({ user }) {
                     className="form-input"
                     required
                   />
+                  {conLocationHint ? (
+                    <div style={{ marginTop: '6px', fontSize: '12px', color: 'var(--text-secondary)' }}>{conLocationHint}</div>
+                  ) : null}
                 </div>
               </div>
 

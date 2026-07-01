@@ -499,6 +499,9 @@ router.post('/jobs', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Type, category and location details are required' });
     }
 
+    const trimmedManualAddress = typeof location.manualAddress === 'string' ? location.manualAddress.trim() : '';
+    const fallbackAddress = (location.address || trimmedManualAddress || 'Location not provided').trim();
+
     const newJob = new Job({
       type,
       category,
@@ -509,8 +512,8 @@ router.post('/jobs', authenticateToken, async (req, res) => {
       location: {
         latitude: Number(location.latitude),
         longitude: Number(location.longitude),
-        address: location.address,
-        manualAddress: location.manualAddress || location.address || ''
+        address: fallbackAddress,
+        manualAddress: trimmedManualAddress
       },
       tracking: {
         active: false,
@@ -938,11 +941,19 @@ router.put('/jobs/:id/cancel', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Job cannot be cancelled' });
     }
 
+    const shouldRefund = job.payment?.status === 'paid' && !job.worker;
+    const previousWorker = job.worker;
+
+    if (shouldRefund) {
+      await refundJobPayment(job, { refundAmount: job.payment.amount || 0 });
+    }
+
+    job.worker = null;
     job.status = 'cancelled';
     await job.save();
 
-    if (job.worker) {
-      await Worker.findByIdAndUpdate(job.worker, { isAvailable: true });
+    if (previousWorker) {
+      await Worker.findByIdAndUpdate(previousWorker, { isAvailable: true });
     }
 
     const io = req.app.get('io');
@@ -950,7 +961,10 @@ router.put('/jobs/:id/cancel', authenticateToken, async (req, res) => {
       io.emit('job_cancelled', { jobId: String(job._id) });
     }
 
-    res.json({ message: 'Job cancelled successfully', job });
+    res.json({
+      message: shouldRefund ? 'Job cancelled successfully and payment refunded.' : 'Job cancelled successfully',
+      job
+    });
   } catch (error) {
     res.status(500).json({ error: 'Failed to cancel job' });
   }

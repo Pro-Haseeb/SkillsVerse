@@ -53,6 +53,7 @@ export default function WorkerDashboard({ user }) {
 
   const [constructionProjects, setConstructionProjects] = useState([]);
   const [contractorCityFilter, setContractorCityFilter] = useState('');
+  const [selectedProjectLocation, setSelectedProjectLocation] = useState(null);
   const itemsPerPage = 10;
   const [historyPage, setHistoryPage] = useState(1);
   const [constructionPage, setConstructionPage] = useState(1);
@@ -73,6 +74,7 @@ export default function WorkerDashboard({ user }) {
   const [gpsLocation, setGpsLocation] = useState({ latitude: 24.8607, longitude: 67.0011 });
   const [trackingDistance, setTrackingDistance] = useState(null);
   const [trackingEta, setTrackingEta] = useState(null);
+  const [socketConnectionStatus, setSocketConnectionStatus] = useState('connected');
   const [isSimulatingGps, setIsSimulatingGps] = useState(false);
 
   // Chat state
@@ -536,6 +538,9 @@ export default function WorkerDashboard({ user }) {
     setActiveJob(null);
     setJobStatus('');
     setMessages([]);
+    setTrackingDistance(null);
+    setTrackingEta(null);
+    setSocketConnectionStatus('connected');
     setActiveTab('overview');
     loadWorkerHistory();
     loadConstructionProjects();
@@ -594,12 +599,18 @@ export default function WorkerDashboard({ user }) {
   const setupSockets = (worker) => {
     if (socketRef.current) socketRef.current.disconnect();
 
-    const socket = io(API_URL);
+    connectionErrorShownRef.current = false;
+    const socket = io(API_URL, {
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000
+    });
     socketRef.current = socket;
 
     socket.emit('register', worker._id);
 
     socket.on('connect', () => {
+      setSocketConnectionStatus('connected');
       if (connectionErrorShownRef.current) {
         toast.success('Tracking connection restored.');
         connectionErrorShownRef.current = false;
@@ -607,6 +618,7 @@ export default function WorkerDashboard({ user }) {
     });
 
     socket.on('connect_error', () => {
+      setSocketConnectionStatus('reconnecting');
       if (!connectionErrorShownRef.current) {
         toast.error('Connection lost. Reconnecting to tracking service...');
         connectionErrorShownRef.current = true;
@@ -614,6 +626,7 @@ export default function WorkerDashboard({ user }) {
     });
 
     socket.on('disconnect', () => {
+      setSocketConnectionStatus('disconnected');
       if (!connectionErrorShownRef.current) {
         toast.info('Tracking connection disconnected. Reconnect when network is available.');
         connectionErrorShownRef.current = true;
@@ -1121,6 +1134,27 @@ export default function WorkerDashboard({ user }) {
                   <h3 style={{ fontSize: '18px', color: 'var(--primary-orange)', marginBottom: '16px' }}>Live Navigation Map</h3>
 
                   {/* Real-time Map */}
+                  {socketConnectionStatus !== 'connected' && (
+                    <div style={{
+                      marginBottom: '12px',
+                      padding: '10px 12px',
+                      borderRadius: '10px',
+                      border: socketConnectionStatus === 'reconnecting'
+                        ? '1px solid rgba(245, 158, 11, 0.35)'
+                        : '1px solid rgba(239, 68, 68, 0.35)',
+                      background: socketConnectionStatus === 'reconnecting'
+                        ? 'rgba(245, 158, 11, 0.1)'
+                        : 'rgba(239, 68, 68, 0.12)',
+                      color: socketConnectionStatus === 'reconnecting' ? '#fbbf24' : '#fca5a5',
+                      fontSize: '13px',
+                      fontWeight: 600
+                    }}>
+                      {socketConnectionStatus === 'reconnecting'
+                        ? 'Tracking is reconnecting — updates may pause briefly.'
+                        : 'Tracking is offline — reconnecting to the live feed.'}
+                    </div>
+                  )}
+
                   <LiveTrackingMap
                     role="worker"
                     customerLocation={activeJob.location}
@@ -1340,8 +1374,8 @@ export default function WorkerDashboard({ user }) {
             </div>
           </div>
 
-          <div style={{ marginTop: '20px', display: 'flex', flexWrap: 'wrap', gap: '14px', alignItems: 'flex-end' }}>
-            <div style={{ flex: '1 1 320px' }}>
+          <div className="worker-dashboard-filter-row" style={{ marginTop: '20px', display: 'flex', flexWrap: 'wrap', gap: '14px', alignItems: 'flex-end' }}>
+            <div style={{ flex: '1 1 320px', minWidth: 0 }}>
               <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                 Search projects by city
               </label>
@@ -1356,7 +1390,7 @@ export default function WorkerDashboard({ user }) {
                 style={{ width: '100%', background: 'var(--bg-input)', border: '1px solid var(--border-grey)', borderRadius: '8px', padding: '10px 12px', color: '#f5f5f7', fontSize: '13px', fontFamily: 'inherit', boxSizing: 'border-box' }}
               />
             </div>
-            <div style={{ minWidth: '220px', color: 'var(--text-secondary)', fontSize: '13px' }}>
+            <div className="worker-dashboard-filter-hint" style={{ minWidth: '220px', color: 'var(--text-secondary)', fontSize: '13px' }}>
               {contractorCityFilter.trim()
                 ? `Filtering offers by city: "${contractorCityFilter.trim()}"`
                 : 'Showing all contractor offers.'}
@@ -1396,7 +1430,14 @@ export default function WorkerDashboard({ user }) {
                           <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{job.customer?.phone || 'No phone'}</div>
                         </td>
                         <td style={{ padding: '14px', maxWidth: '220px' }}>
-                          <div style={{ fontSize: '13px', color: '#fff', fontWeight: 600 }}>{job.location?.manualAddress || job.location?.address || 'Not provided'}</div>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedProjectLocation(job)}
+                            style={{ background: 'none', border: 'none', padding: 0, color: '#f59e0b', fontWeight: 600, textAlign: 'left', cursor: 'pointer', fontSize: '13px' }}
+                          >
+                            {job.location?.manualAddress || job.location?.address || 'Not provided'}
+                          </button>
+                          <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>Tap to view map</div>
                         </td>
                         <td style={{ padding: '14px' }}>
                           <div style={{ fontSize: '13px', color: '#fff', fontWeight: 600 }}>PKR {job.payment?.amount?.toLocaleString() || 'N/A'}</div>
@@ -1429,6 +1470,58 @@ export default function WorkerDashboard({ user }) {
         </div>
       )}
 
+      {selectedProjectLocation && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(7, 12, 24, 0.82)', zIndex: 1200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
+          onClick={() => setSelectedProjectLocation(null)}
+        >
+          <div
+            style={{ width: 'min(760px, 100%)', background: 'var(--bg-card)', border: '1px solid var(--border-grey)', borderRadius: '16px', padding: '20px', boxShadow: '0 20px 60px rgba(0,0,0,0.35)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '14px' }}>
+              <div>
+                <h4 style={{ margin: 0, color: '#fff' }}>Construction site location</h4>
+                <p style={{ margin: '6px 0 0', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                  {selectedProjectLocation.location?.manualAddress || selectedProjectLocation.location?.address || 'Address not provided'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedProjectLocation(null)}
+                style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', padding: '4px' }}
+                aria-label="Close map"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div style={{ height: '340px', width: '100%', borderRadius: '12px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.12)' }}>
+              {selectedProjectLocation.location?.latitude != null && selectedProjectLocation.location?.longitude != null ? (
+                <MapContainer
+                  center={[Number(selectedProjectLocation.location.latitude), Number(selectedProjectLocation.location.longitude)]}
+                  zoom={14}
+                  style={{ height: '100%', width: '100%' }}
+                >
+                  <TileLayer
+                    attribution='&copy; OpenStreetMap contributors'
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                  />
+                  <Marker position={[Number(selectedProjectLocation.location.latitude), Number(selectedProjectLocation.location.longitude)]}>
+                    <Popup>
+                      {selectedProjectLocation.location?.manualAddress || selectedProjectLocation.location?.address || 'Construction site'}
+                    </Popup>
+                  </Marker>
+                </MapContainer>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-secondary)', padding: '20px', textAlign: 'center' }}>
+                  Coordinates are not available for this project yet.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {activeTab === 'construction' && (
         <div className="card card--padded">
           <div className="section-header">
@@ -1450,7 +1543,7 @@ export default function WorkerDashboard({ user }) {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                 {visibleConstruction.map((project) => (
                   <div key={project._id} className="card" style={{ border: '1px solid var(--border-grey)', padding: '20px' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                    <div className="worker-project-card-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '20px' }}>
                       {/* Project Details */}
                       <div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
@@ -1484,7 +1577,7 @@ export default function WorkerDashboard({ user }) {
                         </div>
 
                         {project.status === 'pending_acceptance' && (
-                          <div style={{ display: 'flex', gap: '10px', marginTop: '16px' }}>
+                          <div className="worker-project-action-row" style={{ display: 'flex', gap: '10px', marginTop: '16px' }}>
                             <button
                               onClick={() => handleConstructionResponse(project._id, 'accept')}
                               className="btn btn-primary"
